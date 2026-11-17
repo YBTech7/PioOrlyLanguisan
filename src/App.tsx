@@ -3,13 +3,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useState } from 'react';
 import { MessageSquare } from 'lucide-react';
 import {
   INITIAL_FAQS,
   INITIAL_INSIGHTS,
   INITIAL_PROJECTS,
 } from './data/profileData';
+import { apiFetch } from './lib/apiClient';
 import type {
   AiScopeRecommendation,
   BrandSettings,
@@ -26,8 +27,13 @@ import { ServicesAndSolutions } from './components/ServicesAndSolutions';
 import { ProjectsAndInsights } from './components/ProjectsAndInsights';
 import { ConsultationSection } from './components/ConsultationSection';
 import { BrandMark } from './components/BrandMark';
-import { AiAdvisorDrawer } from './components/AiAdvisorDrawer';
-import { AdminPortal } from './components/AdminPortal';
+
+const AiAdvisorDrawer = lazy(() =>
+  import('./components/AiAdvisorDrawer').then((m) => ({ default: m.AiAdvisorDrawer }))
+);
+const AdminPortal = lazy(() =>
+  import('./components/AdminPortal').then((m) => ({ default: m.AdminPortal }))
+);
 
 export default function App() {
   const [projects, setProjects] = useState<ProjectCase[]>(INITIAL_PROJECTS);
@@ -51,15 +57,18 @@ export default function App() {
 
   const loadSiteContent = useCallback(async () => {
     try {
-      const res = await fetch('/api/content');
-      if (!res.ok) return;
-      const data = await res.json();
+      const data = await apiFetch<{
+        projects?: ProjectCase[];
+        insights?: InsightArticle[];
+        faqs?: FaqItem[];
+        brand?: BrandSettings;
+      }>('/api/content');
       if (Array.isArray(data.projects)) setProjects(data.projects);
       if (Array.isArray(data.insights)) setInsights(data.insights);
       if (Array.isArray(data.faqs)) setFaqs(data.faqs);
       if (data.brand) setBrand(data.brand);
     } catch {
-      // Fallback defaults already initialized
+      // Static fallback defaults remain active when backend API is unavailable
     }
   }, []);
 
@@ -100,6 +109,13 @@ export default function App() {
 
   return (
     <div className="relative min-h-screen bg-[#071B20] text-[#F5F2EB]">
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded-lg focus:bg-[#C8A253] focus:px-4 focus:py-2 focus:text-xs focus:font-semibold focus:text-[#071B20]"
+      >
+        Skip to main content
+      </a>
+
       <NetworkCanvas />
 
       <Header
@@ -107,7 +123,7 @@ export default function App() {
         onBookConsultation={scrollToContact}
       />
 
-      <main>
+      <main id="main-content" tabIndex={-1} className="focus:outline-none">
         <HeroSection
           onBookConsultation={scrollToContact}
           onOpenAdvisor={() => setAdvisorOpen(true)}
@@ -192,17 +208,23 @@ export default function App() {
         </button>
       )}
 
-      <AiAdvisorDrawer
-        open={advisorOpen}
-        onClose={() => setAdvisorOpen(false)}
-        onProceedToConsult={handleAdvisorToConsult}
-      />
+      <Suspense fallback={null}>
+        {advisorOpen && (
+          <AiAdvisorDrawer
+            open={advisorOpen}
+            onClose={() => setAdvisorOpen(false)}
+            onProceedToConsult={handleAdvisorToConsult}
+          />
+        )}
 
-      <AdminPortal
-        open={adminOpen}
-        onClose={() => setAdminOpen(false)}
-        onContentUpdated={loadSiteContent}
-      />
+        {adminOpen && (
+          <AdminPortal
+            open={adminOpen}
+            onClose={() => setAdminOpen(false)}
+            onContentUpdated={loadSiteContent}
+          />
+        )}
+      </Suspense>
     </div>
   );
 }

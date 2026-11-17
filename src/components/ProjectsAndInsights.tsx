@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { ChevronDown, X } from 'lucide-react';
+import { resolveAssetUrl } from '../data/profileData';
 import type { FaqItem, InsightArticle, ProjectCase } from '../types';
 
 interface ProjectsAndInsightsProps {
@@ -17,12 +18,22 @@ export const ProjectsAndInsights: React.FC<ProjectsAndInsightsProps> = ({
   const [activeProject, setActiveProject] = useState<ProjectCase | null>(null);
   const [activeArticle, setActiveArticle] = useState<InsightArticle | null>(null);
   const [openFaqId, setOpenFaqId] = useState<string | null>(faqs[0]?.id || null);
+  const projectCloseRef = useRef<HTMLButtonElement | null>(null);
+  const articleCloseRef = useRef<HTMLButtonElement | null>(null);
 
   const domains = ['All', ...Array.from(new Set(projects.map((p) => p.domain)))];
   const filteredProjects =
     domainFilter === 'All'
       ? projects
       : projects.filter((p) => p.domain === domainFilter);
+
+  useEffect(() => {
+    if (activeProject) projectCloseRef.current?.focus();
+  }, [activeProject]);
+
+  useEffect(() => {
+    if (activeArticle) articleCloseRef.current?.focus();
+  }, [activeArticle]);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -38,7 +49,7 @@ export const ProjectsAndInsights: React.FC<ProjectsAndInsightsProps> = ({
   return (
     <>
       {/* Projects & Blueprints */}
-      <section id="projects" className="relative z-10 border-b border-[#E5CE93]/15 py-16 sm:py-20">
+      <section id="projects" className="scroll-mt-20 relative z-10 border-b border-[#E5CE93]/15 py-16 sm:py-20">
         <div className="mx-auto max-w-[1280px] px-5 sm:px-8">
           <div className="flex flex-col justify-between gap-6 md:flex-row md:items-end">
             <div className="max-w-2xl">
@@ -51,6 +62,9 @@ export const ProjectsAndInsights: React.FC<ProjectsAndInsightsProps> = ({
               >
                 Representative systems and operational blueprints.
               </h2>
+              <p className="mt-2 text-xs text-[#F5F2EB]/65">
+                Benchmark metrics reflect target architectural models across practice domains.
+              </p>
             </div>
 
             <div className="inline-flex flex-wrap gap-1 rounded-xl border border-[#E5CE93]/15 bg-[#0D2B32] p-1">
@@ -82,9 +96,10 @@ export const ProjectsAndInsights: React.FC<ProjectsAndInsightsProps> = ({
               >
                 <div className="relative aspect-[4/3] w-full overflow-hidden bg-[#071B20]">
                   <img
-                    src={project.imageUrl}
+                    src={resolveAssetUrl(project.imageUrl)}
                     alt={project.title}
                     referrerPolicy="no-referrer"
+                    loading="lazy"
                     className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
                   />
                   <div
@@ -131,7 +146,7 @@ export const ProjectsAndInsights: React.FC<ProjectsAndInsightsProps> = ({
       </section>
 
       {/* Insights & Knowledge Center */}
-      <section id="insights" className="relative z-10 border-b border-[#E5CE93]/15 py-16 sm:py-20">
+      <section id="insights" className="scroll-mt-20 relative z-10 border-b border-[#E5CE93]/15 py-16 sm:py-20">
         <div className="mx-auto max-w-[1280px] px-5 sm:px-8">
           <div className="grid grid-cols-1 gap-12 lg:grid-cols-12">
             {/* Editorial Insights */}
@@ -228,10 +243,11 @@ export const ProjectsAndInsights: React.FC<ProjectsAndInsightsProps> = ({
             onClick={(e) => e.stopPropagation()}
           >
             <button
+              ref={projectCloseRef}
               type="button"
               onClick={() => setActiveProject(null)}
               aria-label="Close project details"
-              className="absolute right-4 top-4 rounded-lg border border-[#E5CE93]/20 p-2 text-[#F5F2EB] hover:bg-[#144B54]"
+              className="absolute right-4 top-4 rounded-lg border border-[#E5CE93]/20 p-2 text-[#F5F2EB] hover:bg-[#144B54] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C8A253]"
             >
               <X className="h-4 w-4" />
             </button>
@@ -248,7 +264,7 @@ export const ProjectsAndInsights: React.FC<ProjectsAndInsightsProps> = ({
 
             <div className="mt-5 overflow-hidden rounded-xl border border-[#E5CE93]/15">
               <img
-                src={activeProject.imageUrl}
+                src={resolveAssetUrl(activeProject.imageUrl)}
                 alt={activeProject.title}
                 referrerPolicy="no-referrer"
                 className="aspect-video w-full object-cover"
@@ -292,10 +308,11 @@ export const ProjectsAndInsights: React.FC<ProjectsAndInsightsProps> = ({
             onClick={(e) => e.stopPropagation()}
           >
             <button
+              ref={articleCloseRef}
               type="button"
               onClick={() => setActiveArticle(null)}
               aria-label="Close article"
-              className="absolute right-4 top-4 rounded-lg border border-[#E5CE93]/20 p-2 text-[#F5F2EB] hover:bg-[#144B54]"
+              className="absolute right-4 top-4 rounded-lg border border-[#E5CE93]/20 p-2 text-[#F5F2EB] hover:bg-[#144B54] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C8A253]"
             >
               <X className="h-4 w-4" />
             </button>

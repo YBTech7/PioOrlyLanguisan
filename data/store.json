@@ -29,7 +29,7 @@
         "Automated weekly executive variance digests and backlog alerts",
         "Interactive throughput modeling for capacity planning"
       ],
-      "imageUrl": "/src/assets/images/analytics_dashboard_visual_1794901227040.jpg"
+      "imageUrl": "assets/images/analytics_dashboard_visual_1794901227040.jpg"
     },
     {
       "id": "proj-ai-triage",
@@ -45,7 +45,7 @@
         "Validated consultation handoff with zero manual copy-paste",
         "Responsive Midnight Teal & Metallic Gold interface architecture"
       ],
-      "imageUrl": "/src/assets/images/ai_automation_workflow_1794901228479.jpg"
+      "imageUrl": "assets/images/ai_automation_workflow_1794901228479.jpg"
     },
     {
       "id": "proj-network-ops",
@@ -61,7 +61,7 @@
         "30/60/90-day client onboarding and renewal health scorecards",
         "Centralized SOP library for cross-time-zone operational teams"
       ],
-      "imageUrl": "/src/assets/images/blockchain_network_visual_1794901227232.jpg"
+      "imageUrl": "assets/images/blockchain_network_visual_1794901227232.jpg"
     }
   ],
   "insights": [

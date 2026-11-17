@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ArrowRight, Send, Sparkles, X } from 'lucide-react';
+import { apiFetch } from '../lib/apiClient';
 
 interface ChatMessage {
   role: 'user' | 'assistant';
@@ -34,10 +35,12 @@ export const AiAdvisorDrawer: React.FC<AiAdvisorDrawerProps> = ({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (open) {
       endRef.current?.scrollIntoView({ behavior: 'smooth' });
+      inputRef.current?.focus();
     }
   }, [messages, open]);
 
@@ -63,15 +66,10 @@ export const AiAdvisorDrawer: React.FC<AiAdvisorDrawerProps> = ({
     setLoading(true);
 
     try {
-      const res = await fetch('/api/assistant', {
+      const data = await apiFetch<{ reply: string }>('/api/assistant', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messages: nextMessages }),
       });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Unable to generate guidance right now.');
-      }
       setMessages((prev) => [
         ...prev,
         { role: 'assistant', content: data.reply },
@@ -125,7 +123,7 @@ export const AiAdvisorDrawer: React.FC<AiAdvisorDrawerProps> = ({
           </button>
         </div>
 
-        <div className="flex-1 space-y-4 overflow-y-auto p-5">
+        <div className="flex-1 space-y-4 overflow-y-auto p-5" aria-live="polite">
           {messages.map((msg, idx) => (
             <div
               key={idx}
@@ -198,7 +196,9 @@ export const AiAdvisorDrawer: React.FC<AiAdvisorDrawerProps> = ({
             className="flex items-center gap-2"
           >
             <input
+              ref={inputRef}
               type="text"
+              aria-label="Ask Service Guidance Advisor"
               value={input}
               onChange={(e) => setInput(e.target.value)}
               placeholder="Ask about services, timelines, or operations..."

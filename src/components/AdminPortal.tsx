@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { Lock, Plus, Trash2, Upload, X } from 'lucide-react';
+import { Lock, LogOut, Plus, Trash2, Upload, X } from 'lucide-react';
+import { apiFetch, ApiError } from '../lib/apiClient';
 import type {
   BrandSettings,
   InquiryRecord,
@@ -58,17 +59,23 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   }, [open, onClose]);
 
   const loadDashboard = async (authToken: string) => {
-    const res = await fetch('/api/admin/dashboard', {
-      headers: { Authorization: `Bearer ${authToken}` },
-    });
-    if (!res.ok) {
-      setToken(null);
-      return;
+    try {
+      const data = await apiFetch<{
+        inquiries: InquiryRecord[];
+        projects: ProjectCase[];
+        brand: BrandSettings;
+      }>('/api/admin/dashboard', {
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+      setInquiries(data.inquiries || []);
+      setProjects(data.projects || []);
+      if (data.brand) setBrand(data.brand);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        setToken(null);
+      }
+      setStatusMessage(err instanceof Error ? err.message : 'Unable to load dashboard.');
     }
-    const data = await res.json();
-    setInquiries(data.inquiries || []);
-    setProjects(data.projects || []);
-    if (data.brand) setBrand(data.brand);
   };
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -76,15 +83,10 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
     setAuthLoading(true);
     setAuthError(null);
     try {
-      const res = await fetch('/api/admin/login', {
+      const data = await apiFetch<{ token: string }>('/api/admin/login', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ passcode }),
       });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Authentication failed.');
-      }
       setToken(data.token);
       setPasscode('');
       await loadDashboard(data.token);
@@ -95,108 +97,123 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
     }
   };
 
+  const handleLogout = async () => {
+    if (token) {
+      await apiFetch('/api/admin/logout', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      }).catch(() => {});
+    }
+    setToken(null);
+    setStatusMessage(null);
+  };
+
   const handleInquiryStatusChange = async (id: string, status: InquiryStatus) => {
     if (!token) return;
-    const res = await fetch(`/api/admin/inquiries/${id}`, {
-      method: 'PATCH',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({ status }),
-    });
-    if (res.ok) {
+    try {
+      await apiFetch(`/api/admin/inquiries/${id}`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ status }),
+      });
       setInquiries((prev) =>
         prev.map((item) => (item.id === id ? { ...item, status } : item))
       );
       setStatusMessage(`Updated ${id} to ${status}.`);
+    } catch (err) {
+      setStatusMessage(err instanceof Error ? err.message : 'Unable to update inquiry.');
     }
   };
 
   const handleAddProject = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!token || !newTitle.trim() || !newSummary.trim()) return;
-    const res = await fetch('/api/admin/projects', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({
-        title: newTitle.trim(),
-        domain: newDomain,
-        tier: newTier,
-        metricValue: newMetricValue,
-        metricLabel: newMetricLabel,
-        summary: newSummary.trim(),
-      }),
-    });
-    if (res.ok) {
-      const data = await res.json();
+    try {
+      const data = await apiFetch<{ projects: ProjectCase[] }>('/api/admin/projects', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          title: newTitle.trim(),
+          domain: newDomain,
+          tier: newTier,
+          metricValue: newMetricValue,
+          metricLabel: newMetricLabel,
+          summary: newSummary.trim(),
+        }),
+      });
       setProjects(data.projects);
       setNewTitle('');
       setNewSummary('');
       setStatusMessage('Case study added.');
       onContentUpdated();
+    } catch (err) {
+      setStatusMessage(err instanceof Error ? err.message : 'Unable to add blueprint.');
     }
   };
 
   const handleDeleteProject = async (id: string) => {
     if (!token) return;
-    const res = await fetch(`/api/admin/projects/${id}`, {
-      method: 'DELETE',
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (res.ok) {
-      const data = await res.json();
+    try {
+      const data = await apiFetch<{ projects: ProjectCase[] }>(`/api/admin/projects/${id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
       setProjects(data.projects);
       setStatusMessage('Case study removed.');
       onContentUpdated();
+    } catch (err) {
+      setStatusMessage(err instanceof Error ? err.message : 'Unable to remove blueprint.');
     }
   };
 
   const handleImageUpload = (
     file: File | undefined,
-    field: 'customPortraitDataUrl' | 'customLogoDataUrl'
+    field: 'customLogoDataUrl'
   ) => {
     if (!file || !token) return;
+    const allowedTypes = ['image/png', 'image/jpeg', 'image/webp'];
+    if (!allowedTypes.includes(file.type)) {
+      setStatusMessage('Only PNG, JPEG, or WebP logo files are permitted.');
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      setStatusMessage('Logo upload must be 2MB or smaller.');
+      return;
+    }
+
     const reader = new FileReader();
     reader.onload = async () => {
       const dataUrl = typeof reader.result === 'string' ? reader.result : null;
       if (!dataUrl) return;
-      const res = await fetch('/api/admin/brand', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ [field]: dataUrl }),
-      });
-      if (res.ok) {
-        const data = await res.json();
+      try {
+        const data = await apiFetch<{ brand: BrandSettings }>('/api/admin/brand', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ [field]: dataUrl }),
+        });
         setBrand(data.brand);
         setStatusMessage('Brand asset saved.');
         onContentUpdated();
+      } catch (err) {
+        setStatusMessage(err instanceof Error ? err.message : 'Unable to save logo.');
       }
     };
     reader.readAsDataURL(file);
   };
 
-  const handleResetAsset = async (field: 'customPortraitDataUrl' | 'customLogoDataUrl') => {
+  const handleResetAsset = async (field: 'customLogoDataUrl') => {
     if (!token) return;
-    const res = await fetch('/api/admin/brand', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({ [field]: null }),
-    });
-    if (res.ok) {
-      const data = await res.json();
+    try {
+      const data = await apiFetch<{ brand: BrandSettings }>('/api/admin/brand', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ [field]: null }),
+      });
       setBrand(data.brand);
       setStatusMessage('Restored default asset.');
       onContentUpdated();
+    } catch (err) {
+      setStatusMessage(err instanceof Error ? err.message : 'Unable to restore asset.');
     }
   };
 
@@ -239,17 +256,15 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
           <form onSubmit={handleLogin} className="mx-auto my-8 max-w-sm space-y-4">
             <div className="flex items-center gap-2 text-sm text-[#F5F2EB]/80">
               <Lock className="h-4 w-4 text-[#C8A253]" aria-hidden="true" />
-              <span>Enter executive passcode to manage inquiries and brand files.</span>
+              <span>Enter the server-configured executive passcode to manage leads and brand assets.</span>
             </div>
-            <p className="text-xs text-[#F5F2EB]/55">
-              Default local passcode: <span className="font-mono text-[#E5CE93]">PL-EXEC-2026</span>
-            </p>
             <input
               type="password"
               value={passcode}
               onChange={(e) => setPasscode(e.target.value)}
               placeholder="Passcode"
               aria-label="Executive passcode"
+              autoComplete="current-password"
               className="min-h-[42px] w-full rounded-lg border border-[#E5CE93]/20 bg-[#0D2B32] px-3.5 py-2 text-sm text-[#F5F2EB] focus:border-[#C8A253] focus:outline-none"
             />
             {authError && (
@@ -291,9 +306,19 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                 ))}
               </div>
 
-              {statusMessage && (
-                <span className="text-xs text-[#E5CE93]">{statusMessage}</span>
-              )}
+              <div className="flex items-center gap-3">
+                {statusMessage && (
+                  <span className="text-xs text-[#E5CE93]">{statusMessage}</span>
+                )}
+                <button
+                  type="button"
+                  onClick={handleLogout}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-[#E5CE93]/25 px-3 py-1.5 text-xs font-medium text-[#F5F2EB]/80 hover:border-[#C8A253] hover:text-[#E5CE93]"
+                >
+                  <LogOut className="h-3.5 w-3.5" aria-hidden="true" />
+                  <span>Sign Out</span>
+                </button>
+              </div>
             </div>
 
             {activeTab === 'leads' && (
@@ -443,15 +468,15 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                     Official PL Monogram Logo
                   </h3>
                   <p className="text-xs leading-relaxed text-[#F5F2EB]/70">
-                    Upload your custom PL logo file (PNG or SVG) to replace the geometric vector
-                    monogram in the navigation bar and footer.
+                    Upload your custom PL logo file (PNG, JPEG, or WebP, max 2MB) to replace the
+                    geometric vector monogram in the navigation bar and footer.
                   </p>
                   <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg bg-[#144B54] px-4 py-2 text-xs font-semibold text-[#F5F2EB] hover:bg-[#195E69]">
                     <Upload className="h-3.5 w-3.5" aria-hidden="true" />
                     <span>Upload PL Logo</span>
                     <input
                       type="file"
-                      accept="image/*,.svg"
+                      accept="image/png,image/jpeg,image/webp"
                       className="sr-only"
                       onChange={(e) =>
                         handleImageUpload(e.target.files?.[0], 'customLogoDataUrl')

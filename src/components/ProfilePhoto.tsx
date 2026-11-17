@@ -46,6 +46,8 @@ export default function ProfilePhoto({
       <img
         src={imagePath}
         alt={alt}
+        width={1159}
+        height={1356}
         className={`profile-photo ${className}`.trim()}
         loading={priority ? "eager" : "lazy"}
         decoding="async"

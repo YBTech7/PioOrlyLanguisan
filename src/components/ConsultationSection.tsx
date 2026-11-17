@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { CheckCircle2, Send } from 'lucide-react';
 import { CLIENT_TIER_SOLUTIONS, SERVICE_OFFERINGS } from '../data/profileData';
+import { apiFetch } from '../lib/apiClient';
 import type { ClientTierId, InquiryRecord, ServiceDomainId } from '../types';
 
 interface ConsultationSectionProps {
@@ -23,6 +24,7 @@ export const ConsultationSection: React.FC<ConsultationSectionProps> = ({
   const [serviceDomain, setServiceDomain] = useState<ServiceDomainId>(preselectedService);
   const [timeline, setTimeline] = useState(preselectedTimeline || 'Within 30 days');
   const [message, setMessage] = useState(preselectedSummary || '');
+  const [website, setWebsite] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submittedRecord, setSubmittedRecord] = useState<InquiryRecord | null>(null);
@@ -62,9 +64,8 @@ export const ConsultationSection: React.FC<ConsultationSectionProps> = ({
 
     setSubmitting(true);
     try {
-      const res = await fetch('/api/inquiries', {
+      const data = await apiFetch<{ inquiry: InquiryRecord }>('/api/inquiries', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: name.trim(),
           email: email.trim(),
@@ -73,17 +74,15 @@ export const ConsultationSection: React.FC<ConsultationSectionProps> = ({
           serviceDomain,
           timeline,
           message: message.trim(),
+          website,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Unable to submit consultation request.');
-      }
       setSubmittedRecord(data.inquiry);
       setName('');
       setEmail('');
       setCompany('');
       setMessage('');
+      setWebsite('');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Submission failed. Please try again.');
     } finally {
@@ -92,7 +91,7 @@ export const ConsultationSection: React.FC<ConsultationSectionProps> = ({
   };
 
   return (
-    <section id="contact" className="relative z-10 py-16 sm:py-20">
+    <section id="contact" className="scroll-mt-20 relative z-10 py-16 sm:py-20">
       <div className="mx-auto max-w-[1280px] px-5 sm:px-8">
         <div className="grid grid-cols-1 gap-10 lg:grid-cols-12 lg:gap-12">
           <div className="lg:col-span-5 space-y-5">
@@ -159,6 +158,18 @@ export const ConsultationSection: React.FC<ConsultationSectionProps> = ({
                 </div>
               ) : (
                 <form onSubmit={handleSubmit} className="space-y-5" noValidate>
+                  <div className="sr-only" aria-hidden="true">
+                    <label htmlFor="consult-website">Website</label>
+                    <input
+                      id="consult-website"
+                      type="text"
+                      name="website"
+                      tabIndex={-1}
+                      autoComplete="off"
+                      value={website}
+                      onChange={(e) => setWebsite(e.target.value)}
+                    />
+                  </div>
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     <div>
                       <label

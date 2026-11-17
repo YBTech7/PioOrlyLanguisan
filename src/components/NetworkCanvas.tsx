@@ -109,11 +109,19 @@ export const NetworkCanvas: React.FC = () => {
       drawFrame(false);
     } else {
       const render = () => {
-        drawFrame(true);
+        if (!document.hidden) {
+          drawFrame(true);
+        }
         animationFrameId = window.requestAnimationFrame(render);
       };
       animationFrameId = window.requestAnimationFrame(render);
     }
+
+    const handleVisibilityChange = () => {
+      if (!document.hidden && !prefersReduced) {
+        drawFrame(false);
+      }
+    };
 
     const handleResize = () => {
       setupNodes();
@@ -134,12 +142,14 @@ export const NetworkCanvas: React.FC = () => {
     window.addEventListener('resize', handleResize);
     window.addEventListener('pointermove', handlePointerMove, { passive: true });
     window.addEventListener('pointerleave', handlePointerLeave);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
       window.cancelAnimationFrame(animationFrameId);
       window.removeEventListener('resize', handleResize);
       window.removeEventListener('pointermove', handlePointerMove);
       window.removeEventListener('pointerleave', handlePointerLeave);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, []);
 

@@ -4,7 +4,9 @@ import {
   CLIENT_TIER_SOLUTIONS,
   NETWORK_VISUAL_URL,
   SERVICE_OFFERINGS,
+  resolveAssetUrl,
 } from '../data/profileData';
+import { apiFetch } from '../lib/apiClient';
 import type {
   AiScopeRecommendation,
   ClientTierId,
@@ -98,15 +100,10 @@ export const ServicesAndSolutions: React.FC<ServicesAndSolutionsProps> = ({
     setScopeLoading(true);
     setScopeError(null);
     try {
-      const res = await fetch('/api/assistant/scope', {
+      const data = await apiFetch<{ scope: AiScopeRecommendation }>('/api/assistant/scope', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ goal: goalInput.trim() }),
       });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Unable to generate scope recommendation.');
-      }
       setScopeResult(data.scope);
     } catch (err) {
       setScopeError(
@@ -120,7 +117,7 @@ export const ServicesAndSolutions: React.FC<ServicesAndSolutionsProps> = ({
   return (
     <>
       {/* About & Practice Philosophy */}
-      <section id="about" className="relative z-10 border-b border-[#E5CE93]/15 py-16 sm:py-20">
+      <section id="about" className="scroll-mt-20 relative z-10 border-b border-[#E5CE93]/15 py-16 sm:py-20">
         <div className="mx-auto max-w-[1280px] px-5 sm:px-8">
           <div className="grid grid-cols-1 items-center gap-10 lg:grid-cols-12 lg:gap-12">
             <div className="lg:col-span-6 space-y-5">
@@ -173,9 +170,10 @@ export const ServicesAndSolutions: React.FC<ServicesAndSolutionsProps> = ({
             <div className="lg:col-span-6">
               <div className="overflow-hidden rounded-2xl border border-[#E5CE93]/20 bg-[#0D2B32]">
                 <img
-                  src={NETWORK_VISUAL_URL}
+                  src={resolveAssetUrl(NETWORK_VISUAL_URL)}
                   alt="Distributed network topology representing interconnected operational systems"
                   referrerPolicy="no-referrer"
+                  loading="lazy"
                   className="aspect-video w-full object-cover"
                 />
                 <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[#E5CE93]/15 px-5 py-3.5 text-xs text-[#F5F2EB]/75">
@@ -189,7 +187,7 @@ export const ServicesAndSolutions: React.FC<ServicesAndSolutionsProps> = ({
       </section>
 
       {/* Core Services Asymmetric Bento Grid */}
-      <section id="services" className="relative z-10 border-b border-[#E5CE93]/15 py-16 sm:py-20">
+      <section id="services" className="scroll-mt-20 relative z-10 border-b border-[#E5CE93]/15 py-16 sm:py-20">
         <div className="mx-auto max-w-[1280px] px-5 sm:px-8">
           <div className="flex flex-col justify-between gap-4 border-b border-[#E5CE93]/15 pb-8 md:flex-row md:items-end">
             <div className="max-w-2xl">
@@ -278,7 +276,7 @@ export const ServicesAndSolutions: React.FC<ServicesAndSolutionsProps> = ({
       </section>
 
       {/* Business Solutions & Interactive Analytics + AI Scope */}
-      <section id="solutions" className="relative z-10 border-b border-[#E5CE93]/15 py-16 sm:py-20">
+      <section id="solutions" className="scroll-mt-20 relative z-10 border-b border-[#E5CE93]/15 py-16 sm:py-20">
         <div className="mx-auto max-w-[1280px] px-5 sm:px-8">
           <div className="flex flex-col justify-between gap-6 lg:flex-row lg:items-end">
             <div className="max-w-2xl">
