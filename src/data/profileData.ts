@@ -7,13 +7,13 @@ import {
 } from '../types';
 
 export const NETWORK_VISUAL_URL =
-  '/src/assets/images/blockchain_network_visual_1794901227232.jpg';
+  `${import.meta.env.BASE_URL}src/assets/images/blockchain_network_visual_1794901227232.jpg`;
 
 export const ANALYTICS_VISUAL_URL =
-  '/src/assets/images/analytics_dashboard_visual_1794901227040.jpg';
+  `${import.meta.env.BASE_URL}src/assets/images/analytics_dashboard_visual_1794901227040.jpg`;
 
 export const WORKFLOW_VISUAL_URL =
-  '/src/assets/images/ai_automation_workflow_1794901228479.jpg';
+  `${import.meta.env.BASE_URL}src/assets/images/ai_automation_workflow_1794901228479.jpg`;
 
 export const SERVICE_OFFERINGS: ServiceOffering[] = [
   {
