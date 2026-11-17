@@ -73,14 +73,16 @@ export function resetServerStateForTests(): void {
 }
 
 function normalizeAssetPath(imageUrl: string): string {
-  if (!imageUrl) return WORKFLOW_VISUAL_URL;
-  if (imageUrl.startsWith('/src/assets/')) {
-    return imageUrl.slice(5);
-  }
-  if (imageUrl.startsWith('/assets/')) {
-    return imageUrl.slice(1);
-  }
-  return imageUrl;
+  return (imageUrl || WORKFLOW_VISUAL_URL)
+    .replace(/^\/?src\/assets\//, 'assets/')
+    .replace(/^\/assets\//, 'assets/');
+}
+
+function createInitialProjects(): ProjectCase[] {
+  return INITIAL_PROJECTS.map((project) => ({
+    ...project,
+    imageUrl: normalizeAssetPath(project.imageUrl),
+  }));
 }
 
 function createInitialStore(): PersistentStore {
@@ -101,7 +103,7 @@ function createInitialStore(): PersistentStore {
         notes: 'Sample development record.',
       },
     ],
-    projects: INITIAL_PROJECTS,
+    projects: createInitialProjects(),
     insights: INITIAL_INSIGHTS,
     faqs: INITIAL_FAQS,
     brand: DEFAULT_BRAND,
@@ -135,7 +137,7 @@ function ensureStore(): PersistentStore {
             ...p,
             imageUrl: normalizeAssetPath(p.imageUrl),
           }))
-        : INITIAL_PROJECTS;
+        : createInitialProjects();
 
     const hydrated: PersistentStore = {
       inquiries: Array.isArray(parsed.inquiries) ? parsed.inquiries : [],
@@ -765,7 +767,7 @@ export function createApiApp(): Express {
             .filter(Boolean)
             .slice(0, 8)
         : ['Structured operational framework', 'Automated reporting baseline'],
-      imageUrl: WORKFLOW_VISUAL_URL,
+      imageUrl: normalizeAssetPath(WORKFLOW_VISUAL_URL),
     };
     store.projects.unshift(newProject);
     saveStore(store);
