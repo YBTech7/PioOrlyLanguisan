@@ -8,7 +8,7 @@ import {defineConfig} from 'vite';
 export default defineConfig(() => {
   return {
     // Required for GitHub Pages project hosting.
-    base: '/PioOrlyLanguisan/',
+    base: process.env.VITE_BASE_PATH || '/',
 
     plugins: [
       react(),
