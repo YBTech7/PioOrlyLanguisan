@@ -9,22 +9,23 @@ export function resolveAssetUrl(url: string, base = import.meta.env?.BASE_URL ||
     : url.replace(/^\/+/, '');
   return `${normalizedBase}${relativePath.replace(/^src\/assets\//, 'assets/')}`;
 }
-import {
+
+import type {
   ClientTierSolution,
   FaqItem,
   InsightArticle,
   ProjectCase,
   ServiceOffering,
-} from '../types';
+} from '../types.ts';
 
 export const NETWORK_VISUAL_URL =
-  `${import.meta.env.BASE_URL}src/assets/images/blockchain_network_visual_1794901227232.jpg`;
+  resolveAssetUrl('assets/images/blockchain_network_visual_1794901227232.jpg');
 
 export const ANALYTICS_VISUAL_URL =
-  `${import.meta.env.BASE_URL}src/assets/images/analytics_dashboard_visual_1794901227040.jpg`;
+  resolveAssetUrl('assets/images/analytics_dashboard_visual_1794901227040.jpg');
 
 export const WORKFLOW_VISUAL_URL =
-  `${import.meta.env.BASE_URL}src/assets/images/ai_automation_workflow_1794901228479.jpg`;
+  resolveAssetUrl('assets/images/ai_automation_workflow_1794901228479.jpg');
 
 export const SERVICE_OFFERINGS: ServiceOffering[] = [
   {
