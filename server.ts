@@ -132,7 +132,7 @@ function ensureStore(): PersistentStore {
     const raw = fs.readFileSync(storePath, 'utf-8');
     const parsed = JSON.parse(raw) as Partial<PersistentStore>;
     const projects =
-      Array.isArray(parsed.projects) && parsed.projects.length > 0
+      Array.isArray(parsed.projects)
         ? parsed.projects.map((p) => ({
             ...p,
             imageUrl: normalizeAssetPath(p.imageUrl),
@@ -713,18 +713,18 @@ export function createApiApp(): Express {
       res.status(404).json({ error: 'Inquiry not found.' });
       return;
     }
+    if (status !== undefined && !VALID_STATUSES.includes(status)) {
+      res.status(400).json({ error: 'Invalid inquiry status value.' });
+      return;
+    }
+    if (notes !== undefined && (typeof notes !== 'string' || notes.length > 1000)) {
+      res.status(400).json({ error: 'Notes must be a string of 1000 characters or fewer.' });
+      return;
+    }
     if (status !== undefined) {
-      if (!VALID_STATUSES.includes(status)) {
-        res.status(400).json({ error: 'Invalid inquiry status value.' });
-        return;
-      }
       target.status = status;
     }
     if (notes !== undefined) {
-      if (typeof notes !== 'string' || notes.length > 1000) {
-        res.status(400).json({ error: 'Notes must be a string of 1000 characters or fewer.' });
-        return;
-      }
       target.notes = notes.trim();
     }
     saveStore(store);
