@@ -60,13 +60,13 @@ export async function apiFetch<T>(
       if (text.trim().startsWith('<')) {
         throw new ApiError(
           'Backend API endpoint returned HTML instead of JSON. Verify your backend server or VITE_API_BASE_URL configuration.',
-          response.status || 502,
+          response.ok ? 502 : response.status,
           true
         );
       }
       throw new ApiError(
         `Unexpected response from server (${response.status}).`,
-        response.status || 502
+        response.ok ? 502 : response.status
       );
     }
 

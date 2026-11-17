@@ -36,16 +36,10 @@ jobs:
         run: npm run test:api
 
       - name: Build website
-        run: npm run build
+        run: npm run build:gh-pages
 
       - name: Verify production files
-        run: |
-          test -f dist/index.html
-          test -d dist/assets
-          if grep -q 'src="/src/main.tsx"' dist/index.html; then
-            echo "Development entry detected"
-            exit 1
-          fi
+        run: npm run verify:gh-pages
 
       - uses: actions/configure-pages@v5
 

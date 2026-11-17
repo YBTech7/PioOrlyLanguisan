@@ -116,62 +116,47 @@ function ensureStore(): PersistentStore {
   }
 
   const storePath = getStorePath();
-  const dir = path.dirname(storePath);
 
-  try {
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-    if (!fs.existsSync(storePath)) {
-      const initial = createInitialStore();
-      fs.writeFileSync(storePath, JSON.stringify(initial, null, 2), 'utf-8');
-      memoryStore = initial;
-      return initial;
-    }
-
-    const raw = fs.readFileSync(storePath, 'utf-8');
-    const parsed = JSON.parse(raw) as Partial<PersistentStore>;
-    const projects =
-      Array.isArray(parsed.projects)
-        ? parsed.projects.map((p) => ({
-            ...p,
-            imageUrl: normalizeAssetPath(p.imageUrl),
-          }))
-        : createInitialProjects();
-
-    const hydrated: PersistentStore = {
-      inquiries: Array.isArray(parsed.inquiries) ? parsed.inquiries : [],
-      projects,
-      insights:
-        Array.isArray(parsed.insights) && parsed.insights.length > 0
-          ? parsed.insights
-          : INITIAL_INSIGHTS,
-      faqs:
-        Array.isArray(parsed.faqs) && parsed.faqs.length > 0
-          ? parsed.faqs
-          : INITIAL_FAQS,
-      brand: { ...DEFAULT_BRAND, ...(parsed.brand || {}) },
-    };
-    memoryStore = hydrated;
-    return hydrated;
-  } catch {
-    memoryStore = createInitialStore();
-    return memoryStore;
+  if (!fs.existsSync(storePath)) {
+    const initial = createInitialStore();
+    saveStore(initial);
+    return initial;
   }
+
+  const raw = fs.readFileSync(storePath, 'utf-8');
+  const parsed = JSON.parse(raw) as Partial<PersistentStore>;
+  const projects = Array.isArray(parsed.projects)
+    ? parsed.projects.map((project) => ({
+        ...project,
+        imageUrl: normalizeAssetPath(project.imageUrl),
+      }))
+    : createInitialProjects();
+
+  memoryStore = {
+    inquiries: Array.isArray(parsed.inquiries) ? parsed.inquiries : [],
+    projects,
+    insights: Array.isArray(parsed.insights) && parsed.insights.length > 0
+      ? parsed.insights
+      : INITIAL_INSIGHTS,
+    faqs: Array.isArray(parsed.faqs) && parsed.faqs.length > 0
+      ? parsed.faqs
+      : INITIAL_FAQS,
+    brand: { ...DEFAULT_BRAND, ...(parsed.brand || {}) },
+  };
+  return memoryStore;
 }
 
 function saveStore(store: PersistentStore): void {
-  memoryStore = store;
   const storePath = getStorePath();
-  const dir = path.dirname(storePath);
+  const temporaryPath = `${storePath}.${crypto.randomUUID()}.tmp`;
+  fs.mkdirSync(path.dirname(storePath), { recursive: true });
   try {
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-    fs.writeFileSync(storePath, JSON.stringify(store, null, 2), 'utf-8');
-  } catch {
-    // Keep updated in memoryStore if filesystem is read-only
+    fs.writeFileSync(temporaryPath, JSON.stringify(store, null, 2), { encoding: 'utf-8', mode: 0o600 });
+    fs.renameSync(temporaryPath, storePath);
+  } finally {
+    fs.rmSync(temporaryPath, { force: true });
   }
+  memoryStore = store;
 }
 
 function getGeminiClient(): GoogleGenAI {
@@ -502,7 +487,7 @@ export function createApiApp(): Express {
       return;
     }
 
-    const store = ensureStore();
+    const store = structuredClone(ensureStore());
     const record: InquiryRecord = {
       id: `INQ-${new Date().getFullYear()}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`,
       name: trimmedName,
@@ -707,7 +692,7 @@ export function createApiApp(): Express {
   app.patch('/api/admin/inquiries/:id', requireAdmin, (req, res) => {
     const { id } = req.params;
     const { status, notes } = req.body ?? {};
-    const store = ensureStore();
+    const store = structuredClone(ensureStore());
     const target = store.inquiries.find((item) => item.id === id);
     if (!target) {
       res.status(404).json({ error: 'Inquiry not found.' });
@@ -751,7 +736,7 @@ export function createApiApp(): Express {
       return;
     }
 
-    const store = ensureStore();
+    const store = structuredClone(ensureStore());
     const newProject: ProjectCase = {
       id: `proj-${crypto.randomUUID().slice(0, 8)}`,
       title: trimmedTitle,
@@ -776,7 +761,7 @@ export function createApiApp(): Express {
 
   app.delete('/api/admin/projects/:id', requireAdmin, (req, res) => {
     const { id } = req.params;
-    const store = ensureStore();
+    const store = structuredClone(ensureStore());
     const next = store.projects.filter((p) => p.id !== id);
     if (next.length === store.projects.length) {
       res.status(404).json({ error: 'Project not found.' });
@@ -797,7 +782,7 @@ export function createApiApp(): Express {
       }
     }
 
-    const store = ensureStore();
+    const store = structuredClone(ensureStore());
     store.brand = {
       // Preserve static original portrait policy
       customPortraitDataUrl: null,
@@ -812,6 +797,23 @@ export function createApiApp(): Express {
     };
     saveStore(store);
     res.json({ brand: store.brand });
+  });
+
+  app.use('/api', (_req, res) => {
+    res.status(404).json({ error: 'API endpoint not found.' });
+  });
+
+  app.use('/api', (err: Error & { status?: number }, _req: Request, res: Response, next: NextFunction) => {
+    if (res.headersSent) {
+      next(err);
+      return;
+    }
+    if (err.status === 400 || err.status === 413) {
+      res.status(err.status).json({ error: err.status === 413 ? 'Request is too large.' : 'Invalid request body.' });
+      return;
+    }
+    console.error('API request failed:', err);
+    res.status(500).json({ error: 'The server could not complete this request. Please try again.' });
   });
 
   return app;

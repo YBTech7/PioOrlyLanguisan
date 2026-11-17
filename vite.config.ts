@@ -7,7 +7,7 @@ import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
   return {
-    // Required for GitHub Pages project hosting.
+    // Railway serves the site at the domain root. GitHub Pages overrides this base.
     base: process.env.VITE_BASE_PATH || '/',
 
     plugins: [
@@ -24,9 +24,9 @@ export default defineConfig(() => {
             return;
           }
 
-          const distDir = path.resolve(__dirname, 'dist');
+          const distDir = path.resolve(import.meta.dirname, 'dist');
           const srcAssets = path.resolve(
-            __dirname,
+            import.meta.dirname,
             'src/assets'
           );
 
@@ -50,7 +50,7 @@ export default defineConfig(() => {
 
     resolve: {
       alias: {
-        '@': path.resolve(__dirname, '.'),
+        '@': path.resolve(import.meta.dirname, '.'),
       },
     },
 
