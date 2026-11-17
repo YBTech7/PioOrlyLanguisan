@@ -1,0 +1,60 @@
+.profile-photo-container {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  max-width: 100%;
+  overflow: visible;
+  background: transparent;
+}
+
+.profile-photo {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-width: 480px;
+  object-fit: contain;
+  object-position: center;
+  aspect-ratio: auto;
+
+  border: none;
+  border-radius: 0;
+
+  filter: none;
+  opacity: 1;
+
+  transform: none;
+  animation: none;
+  transition: none;
+
+  box-shadow: none;
+  mix-blend-mode: normal;
+}
+
+@media (max-width: 1199px) {
+  .profile-photo {
+    max-width: 400px;
+  }
+}
+
+@media (max-width: 767px) {
+  .profile-photo-container {
+    width: 100%;
+    padding: 0;
+    margin: 0 auto;
+  }
+
+  .profile-photo {
+    width: 100%;
+    max-width: 340px;
+    height: auto;
+    object-fit: contain;
+  }
+}
+
+@media (max-width: 420px) {
+  .profile-photo {
+    max-width: 100%;
+  }
+}
