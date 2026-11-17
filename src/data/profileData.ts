@@ -1,13 +1,14 @@
 /** Resolve stored asset paths for both local Vite and GitHub Pages hosting. */
-export function resolveAssetUrl(url: string): string {
+export function resolveAssetUrl(url: string, base = import.meta.env?.BASE_URL || '/'): string {
   if (!url) return url;
-  if (/^(?:[a-z][a-z\d+.-]*:|\/\/|data:|blob:)/i.test(url)) return url;
-  const base = import.meta.env.BASE_URL || '/';
-  const normalizedBase = base.endsWith('/') ? base : `${base}/`;
-  if (url.startsWith(normalizedBase)) return url;
-  return `${normalizedBase}${url.replace(/^\/+/, '')}`;
-}
+  if (/^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(url)) return url;
 
+  const normalizedBase = base.endsWith('/') ? base : `${base}/`;
+  const relativePath = url.startsWith(normalizedBase)
+    ? url.slice(normalizedBase.length)
+    : url.replace(/^\/+/, '');
+  return `${normalizedBase}${relativePath.replace(/^src\/assets\//, 'assets/')}`;
+}
 import {
   ClientTierSolution,
   FaqItem,
