@@ -107,6 +107,10 @@ describe('International Phone Library Helpers', () => {
     expect(validateAndNormalizePhone('   ', 'US')).toEqual({ valid: true, isEmpty: true });
     expect(validateAndNormalizePhone(undefined, 'PH')).toEqual({ valid: true, isEmpty: true });
 
+    expect(validateAndNormalizePhone('Call 0917 123 4567', 'PH').valid).toBe(false);
+    expect(validateAndNormalizePhone('+63 917 123 4567 ext. 12', 'PH').error).toContain('without an extension');
+    expect(detectCountryFromInternationalInput('+1 416 555 0199 call me', 'PH')).toBeNull();
+
     const invalidShort = validateAndNormalizePhone('12345', 'PH');
     expect(invalidShort.valid).toBe(false);
     expect(invalidShort.error).toContain('Philippines (+63)');

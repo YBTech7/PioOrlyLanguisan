@@ -115,7 +115,7 @@ export function detectCountryFromInternationalInput(
   const trimmed = value.trim();
   if (!trimmed.startsWith('+')) return null;
 
-  const parsed = parsePhoneNumberFromString(trimmed);
+  const parsed = parsePhoneNumberFromString(trimmed, { extract: false });
   if (!parsed?.country || !isSupportedCountry(parsed.country)) {
     return null;
   }
@@ -168,9 +168,18 @@ export function validateAndNormalizePhone(
     };
   }
 
-  const parsed = isInternational
-    ? parsePhoneNumberFromString(trimmed)
-    : parsePhoneNumberFromString(trimmed, safeDefaultCountry);
+  const parsed = parsePhoneNumberFromString(trimmed, {
+    defaultCountry: isInternational ? undefined : safeDefaultCountry,
+    extract: false,
+  });
+
+  if (parsed?.ext) {
+    return {
+      valid: false,
+      isEmpty: false,
+      error: 'Please enter the main contact number without an extension.',
+    };
+  }
 
   if (!parsed || !parsed.isValid()) {
     if (!isInternational && safeDefaultCountry) {

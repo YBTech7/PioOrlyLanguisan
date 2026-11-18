@@ -60,20 +60,26 @@ export async function apiFetch<T>(
       if (text.trim().startsWith('<')) {
         throw new ApiError(
           'Backend API endpoint returned HTML instead of JSON. Verify your backend server or VITE_API_BASE_URL configuration.',
-          response.status || 502,
+          response.ok ? 502 : response.status,
           true
         );
       }
       throw new ApiError(
         `Unexpected response from server (${response.status}).`,
-        response.status || 502
+        response.ok ? 502 : response.status
       );
     }
 
-    const payload = await response.json();
+    let payload: unknown;
+    try {
+      payload = await response.json();
+    } catch (error) {
+      if (controller.signal.aborted) throw error;
+      throw new ApiError('The backend returned an invalid response.', response.ok ? 502 : response.status);
+    }
     if (!response.ok) {
       const message =
-        typeof payload?.error === 'string'
+        payload && typeof payload === 'object' && 'error' in payload && typeof payload.error === 'string'
           ? payload.error
           : `Request failed with status ${response.status}.`;
       throw new ApiError(message, response.status);
