@@ -17,7 +17,9 @@ it.skipIf(!process.env.TEST_CONSULTATION_DATABASE_URL)('stores structured inquir
   const recovered = openInbox(url);
   try {
     expect(await inbox.save(inquiry, key)).toEqual(inquiry);
+    expect(await inbox.save({ ...inquiry, message: 'A different consultation request.' }, key)).toBeNull();
     expect(await inbox.update(inquiry.id, { status: 'In Review' })).toMatchObject({ status: 'In Review' });
+    expect(await inbox.save(inquiry, key)).toMatchObject({ id: inquiry.id, status: 'In Review' });
     await oldServer`UPDATE consultation_inbox
       SET inquiry = ${oldServer.json(JSON.stringify(inquiry))}, email_state = 'review'
       WHERE id = ${inquiry.id}`;

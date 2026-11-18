@@ -41,9 +41,11 @@ export function openInbox(url: string) {
         INSERT INTO consultation_inbox (id, submission_key, inquiry)
         VALUES (${inquiry.id}, ${key}, ${sql.json({ ...inquiry })})
         ON CONFLICT (submission_key) DO UPDATE SET submission_key = EXCLUDED.submission_key
+        WHERE (consultation_inbox.inquiry - ARRAY['id', 'createdAt', 'status', 'notes'])
+            = (EXCLUDED.inquiry - ARRAY['id', 'createdAt', 'status', 'notes'])
         RETURNING inquiry
       `;
-      return row.inquiry;
+      return row?.inquiry ?? null;
     },
     async list() {
       await ready();
@@ -180,7 +182,12 @@ export function runConsultationMailer(inbox: ReturnType<typeof openInbox>) {
       return;
     }
 
-    const token = await tokenResponse.json() as { access_token?: string };
+    const token = await tokenResponse.json().catch(() => null) as { access_token?: string } | null;
+    if (typeof token?.access_token !== 'string' || !token.access_token.trim()) {
+      console.warn('Consultation Gmail token response did not include an access token', { inquiryId: job.id });
+      await inbox.finish(job, retry);
+      return;
+    }
     let response: Response;
     try {
       response = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
@@ -199,8 +206,8 @@ export function runConsultationMailer(inbox: ReturnType<typeof openInbox>) {
       await inbox.finish(job, response.status === 429 ? retry : 'review');
       return;
     }
-    const result = await response.json() as { id?: string };
-    await inbox.finish(job, 'sent', result.id ?? null);
+    const result = await response.json().catch(() => null) as { id?: string } | null;
+    await inbox.finish(job, 'sent', result?.id ?? null);
     console.info('Gmail accepted consultation notification', { inquiryId: job.id });
   }
 

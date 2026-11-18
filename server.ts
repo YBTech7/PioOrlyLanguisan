@@ -530,6 +530,10 @@ export function createApiApp(): Express {
     try {
       if (consultationInbox) {
         const inquiry = await consultationInbox.save(record, key ?? crypto.randomUUID());
+        if (!inquiry) {
+          res.status(409).json({ error: 'The submission reference is already in use. Please try again.' });
+          return;
+        }
         console.info('Consultation inquiry recorded', {
           inquiryId: inquiry.id,
           httpStatus: 201,
@@ -538,6 +542,11 @@ export function createApiApp(): Express {
           deduplicated: inquiry.id !== record.id,
         });
         res.status(201).json({ inquiry });
+        return;
+      }
+      if (process.env.RAILWAY_ENVIRONMENT_NAME === 'production') {
+        console.error('Consultation storage is missing its production database connection.');
+        res.status(503).json({ error: 'We could not save your request. Please try again.' });
         return;
       }
       const store = structuredClone(ensureStore());

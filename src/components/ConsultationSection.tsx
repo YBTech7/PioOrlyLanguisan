@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { CheckCircle2, Send } from 'lucide-react';
 import { CLIENT_TIER_SOLUTIONS, SERVICE_OFFERINGS } from '../data/profileData';
-import { apiFetch } from '../lib/apiClient';
+import { ApiError, apiFetch } from '../lib/apiClient';
 import type { ClientTierId, InquiryRecord, ServiceDomainId } from '../types';
 
 interface ConsultationSectionProps {
@@ -101,6 +101,7 @@ export const ConsultationSection: React.FC<ConsultationSectionProps> = ({
       setMessage('');
       setWebsite('');
     } catch (err) {
+      if (err instanceof ApiError && err.status === 409) submission.current = null;
       setError(err instanceof Error ? err.message : 'Submission failed. Please try again.');
     } finally {
       submittingRef.current = false;
