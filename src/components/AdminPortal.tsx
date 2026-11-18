@@ -32,7 +32,8 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   const [authLoading, setAuthLoading] = useState(false);
 
   const [activeTab, setActiveTab] = useState<'leads' | 'projects' | 'brand'>('leads');
-  const [inquiries, setInquiries] = useState<InquiryRecord[]>([]);
+  type AdminInquiry = InquiryRecord & { emailStatus?: 'pending' | 'sending' | 'sent' | 'review' };
+  const [inquiries, setInquiries] = useState<AdminInquiry[]>([]);
   const [projects, setProjects] = useState<ProjectCase[]>([]);
   const [brand, setBrand] = useState<BrandSettings>({
     customPortraitDataUrl: null,
@@ -61,7 +62,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   const loadDashboard = async (authToken: string) => {
     try {
       const data = await apiFetch<{
-        inquiries: InquiryRecord[];
+        inquiries: AdminInquiry[];
         projects: ProjectCase[];
         brand: BrandSettings;
       }>('/api/admin/dashboard', {
@@ -342,6 +343,11 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                             {inq.name} — {inq.company}
                           </h3>
                           <p className="text-xs text-[#F5F2EB]/65">{inq.email}</p>
+                          {inq.emailStatus && (
+                            <p className="text-xs text-[#F5F2EB]/65">
+                              Email {inq.emailStatus === 'review' ? 'needs review' : inq.emailStatus}
+                            </p>
+                          )}
                         </div>
 
                         <select
