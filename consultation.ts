@@ -6,7 +6,7 @@ type Row = { inquiry: InquiryRecord; email_state: EmailState };
 type Job = { id: string; inquiry: InquiryRecord; attempts: number };
 const emailAddress = /^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/i;
 
-function openInbox(url: string) {
+export function openInbox(url: string) {
   const sql = postgres(url, { max: 3, connect_timeout: 5 });
   let initialized: Promise<void> | undefined;
   const ready = () => initialized ??= sql`
@@ -20,17 +20,26 @@ function openInbox(url: string) {
       updated_at timestamptz NOT NULL DEFAULT now(),
       provider_id text
     )
-  `.then(() => undefined).catch((error: unknown) => {
+  `.then(async () => {
+    await sql`
+      UPDATE consultation_inbox
+      SET inquiry = (inquiry #>> '{}')::jsonb,
+          email_state = 'pending', next_attempt = now(), attempts = 0,
+          provider_id = NULL, updated_at = now()
+      WHERE jsonb_typeof(inquiry) = 'string'
+    `;
+  }).catch((error: unknown) => {
     initialized = undefined;
     throw error;
   });
 
   return {
+    close: () => sql.end(),
     async save(inquiry: InquiryRecord, key: string) {
       await ready();
       const [row] = await sql<{ inquiry: InquiryRecord }[]>`
         INSERT INTO consultation_inbox (id, submission_key, inquiry)
-        VALUES (${inquiry.id}, ${key}, ${JSON.stringify(inquiry)}::jsonb)
+        VALUES (${inquiry.id}, ${key}, ${sql.json({ ...inquiry })})
         ON CONFLICT (submission_key) DO UPDATE SET submission_key = EXCLUDED.submission_key
         RETURNING inquiry
       `;
@@ -47,7 +56,7 @@ function openInbox(url: string) {
       await ready();
       const [row] = await sql<Row[]>`
         UPDATE consultation_inbox
-        SET inquiry = inquiry || ${JSON.stringify(changes)}::jsonb
+        SET inquiry = inquiry || ${sql.json({ ...changes })}
         WHERE id = ${id} RETURNING inquiry, email_state
       `;
       return row && { ...row.inquiry, emailStatus: row.email_state };
@@ -154,6 +163,7 @@ export function runConsultationMailer(inbox: ReturnType<typeof openInbox>) {
       return;
     }
     if (!tokenResponse.ok) {
+      console.warn('Consultation Gmail token request failed', { status: tokenResponse.status });
       await inbox.finish(job, tokenResponse.status >= 500 || tokenResponse.status === 429 ? retry : 'review');
       return;
     }
@@ -173,11 +183,13 @@ export function runConsultationMailer(inbox: ReturnType<typeof openInbox>) {
       return;
     }
     if (!response.ok) {
+      console.warn('Consultation Gmail send failed', { inquiryId: job.id, status: response.status });
       await inbox.finish(job, response.status === 429 ? retry : 'review');
       return;
     }
     const result = await response.json() as { id?: string };
     await inbox.finish(job, 'sent', result.id ?? null);
+    console.info('Gmail accepted consultation notification', { inquiryId: job.id });
   }
 
   async function poll() {

@@ -20,6 +20,19 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: portfolio_test
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
 
     steps:
       - uses: actions/checkout@v4
@@ -32,6 +45,8 @@ jobs:
         run: npm install --no-audit --no-fund
 
       - name: Check API and TypeScript
+        env:
+          TEST_CONSULTATION_DATABASE_URL: postgresql://postgres:test@localhost:${{ job.services.postgres.ports[5432] }}/portfolio_test
         run: |
           npm run lint
           npm run test:api

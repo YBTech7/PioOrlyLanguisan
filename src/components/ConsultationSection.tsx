@@ -83,6 +83,9 @@ export const ConsultationSection: React.FC<ConsultationSectionProps> = ({
         method: 'POST',
         body: JSON.stringify({ ...fields, submissionKey: submission.current.key }),
       });
+      if (!data.inquiry || typeof data.inquiry.id !== 'string' || !data.inquiry.id.trim()) {
+        throw new Error('We could not confirm your tracking ID. Please retry this request.');
+      }
       submission.current = null;
       setSubmittedRecord(data.inquiry);
       setName('');
