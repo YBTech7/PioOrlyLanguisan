@@ -18,9 +18,11 @@ export const NetworkCanvas: React.FC = () => {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const prefersReduced =
-      typeof window !== 'undefined' &&
-      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const motionQuery =
+      typeof window !== 'undefined'
+        ? window.matchMedia('(prefers-reduced-motion: reduce)')
+        : null;
+    let prefersReduced = motionQuery?.matches ?? false;
 
     let animationFrameId = 0;
     let width = 0;
@@ -37,16 +39,16 @@ export const NetworkCanvas: React.FC = () => {
       canvas.height = Math.floor(height * dpr);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-      const targetCount = Math.min(44, Math.max(18, Math.floor((width * height) / 28000)));
+      const targetCount = Math.min(26, Math.max(12, Math.floor((width * height) / 48000)));
       nodes.length = 0;
       for (let i = 0; i < targetCount; i++) {
         nodes.push({
           x: Math.random() * width,
           y: Math.random() * height,
-          vx: (Math.random() - 0.5) * 0.28,
-          vy: (Math.random() - 0.5) * 0.28,
-          radius: i % 5 === 0 ? 2.2 : 1.5,
-          gold: i % 4 === 0,
+          vx: (Math.random() - 0.5) * 0.14,
+          vy: (Math.random() - 0.5) * 0.14,
+          radius: i % 5 === 0 ? 1.8 : 1.2,
+          gold: i % 5 === 0,
         });
       }
     };
@@ -66,29 +68,29 @@ export const NetworkCanvas: React.FC = () => {
           const dx = pointer.x - n.x;
           const dy = pointer.y - n.y;
           const dist = Math.hypot(dx, dy);
-          if (dist < 140 && dist > 1) {
-            n.x -= (dx / dist) * 0.18;
-            n.y -= (dy / dist) * 0.18;
+          if (dist < 120 && dist > 1) {
+            n.x -= (dx / dist) * 0.08;
+            n.y -= (dy / dist) * 0.08;
           }
         }
       }
 
-      const maxDist = 155;
+      const maxDist = 140;
       for (let i = 0; i < nodes.length; i++) {
         for (let j = i + 1; j < nodes.length; j++) {
           const a = nodes[i];
           const b = nodes[j];
           const dist = Math.hypot(a.x - b.x, a.y - b.y);
           if (dist < maxDist) {
-            const alpha = (1 - dist / maxDist) * 0.22;
+            const alpha = (1 - dist / maxDist) * 0.12;
             ctx.beginPath();
             ctx.moveTo(a.x, a.y);
             ctx.lineTo(b.x, b.y);
             ctx.strokeStyle =
               a.gold || b.gold
-                ? `rgba(200, 162, 83, ${alpha * 0.85})`
-                : `rgba(38, 128, 142, ${alpha})`;
-            ctx.lineWidth = 0.9;
+                ? `rgba(200, 162, 83, ${alpha * 0.75})`
+                : `rgba(45, 134, 152, ${alpha})`;
+            ctx.lineWidth = 0.75;
             ctx.stroke();
           }
         }
@@ -98,24 +100,35 @@ export const NetworkCanvas: React.FC = () => {
         const n = nodes[i];
         ctx.beginPath();
         ctx.arc(n.x, n.y, n.radius, 0, Math.PI * 2);
-        ctx.fillStyle = n.gold ? 'rgba(229, 206, 147, 0.55)' : 'rgba(54, 152, 168, 0.45)';
+        ctx.fillStyle = n.gold ? 'rgba(223, 197, 133, 0.34)' : 'rgba(54, 148, 168, 0.28)';
         ctx.fill();
       }
     };
 
-    setupNodes();
-
-    if (prefersReduced) {
-      drawFrame(false);
-    } else {
+    const startLoop = () => {
+      window.cancelAnimationFrame(animationFrameId);
+      if (prefersReduced) {
+        drawFrame(false);
+        return;
+      }
       const render = () => {
-        if (!document.hidden) {
+        if (!document.hidden && !prefersReduced) {
           drawFrame(true);
         }
-        animationFrameId = window.requestAnimationFrame(render);
+        if (!prefersReduced) {
+          animationFrameId = window.requestAnimationFrame(render);
+        }
       };
       animationFrameId = window.requestAnimationFrame(render);
-    }
+    };
+
+    setupNodes();
+    startLoop();
+
+    const handleMotionChange = (e: MediaQueryListEvent) => {
+      prefersReduced = e.matches;
+      startLoop();
+    };
 
     const handleVisibilityChange = () => {
       if (!document.hidden && !prefersReduced) {
@@ -129,6 +142,7 @@ export const NetworkCanvas: React.FC = () => {
     };
 
     const handlePointerMove = (e: PointerEvent) => {
+      if (prefersReduced) return;
       const rect = canvas.getBoundingClientRect();
       pointer.x = e.clientX - rect.left;
       pointer.y = e.clientY - rect.top;
@@ -143,6 +157,7 @@ export const NetworkCanvas: React.FC = () => {
     window.addEventListener('pointermove', handlePointerMove, { passive: true });
     window.addEventListener('pointerleave', handlePointerLeave);
     document.addEventListener('visibilitychange', handleVisibilityChange);
+    motionQuery?.addEventListener('change', handleMotionChange);
 
     return () => {
       window.cancelAnimationFrame(animationFrameId);
@@ -150,6 +165,7 @@ export const NetworkCanvas: React.FC = () => {
       window.removeEventListener('pointermove', handlePointerMove);
       window.removeEventListener('pointerleave', handlePointerLeave);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
+      motionQuery?.removeEventListener('change', handleMotionChange);
     };
   }, []);
 
@@ -157,7 +173,7 @@ export const NetworkCanvas: React.FC = () => {
     <canvas
       ref={canvasRef}
       aria-hidden="true"
-      className="pointer-events-none fixed inset-0 z-0 h-full w-full opacity-75"
+      className="pointer-events-none fixed inset-0 z-0 h-full w-full opacity-35"
     />
   );
 };

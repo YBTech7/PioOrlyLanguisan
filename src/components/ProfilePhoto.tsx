@@ -10,31 +10,25 @@ interface ProfilePhotoProps {
 export default function ProfilePhoto({
   className = "",
   priority = false,
-  alt = "Original professional photograph of Pio Languisan",
+  alt = "Portrait of Pio Languisan",
 }: ProfilePhotoProps) {
   const [hasError, setHasError] = useState(false);
 
-  const imagePath =
-    `${import.meta.env.BASE_URL}assets/images/profile-original.png`;
+  const imagePath = `${import.meta.env.BASE_URL}assets/images/portrait-pio-languisan.png`;
 
   if (hasError) {
     return (
       <div
         role="img"
-        aria-label="Missing original profile photograph"
+        aria-label="Missing portrait photograph of Pio Languisan"
         className="profile-photo-container"
       >
-        <div className="w-full max-w-[480px] border border-[#E5CE93]/25 bg-[#0D2B32] px-6 py-10 text-center">
+        <div className="profile-photo-frame px-6 py-12 text-center">
           <p className="text-sm font-semibold text-[#F5F2EB]">
-            Original profile photograph not found
+            Portrait photograph unavailable
           </p>
-          <p className="mt-2 font-mono text-xs text-[#E5CE93]">
-            Expected asset: public/assets/images/profile-original.png
-          </p>
-          <p className="mt-2 text-xs leading-relaxed text-[#F5F2EB]/70">
-            Please add the original uploaded PNG file to{" "}
-            <span className="font-mono">public/assets/images/profile-original.png</span>{" "}
-            without altering or re-encoding the image.
+          <p className="mt-2 font-mono text-xs text-[#DFC585]">
+            public/assets/images/portrait-pio-languisan.png
           </p>
         </div>
       </div>
@@ -43,18 +37,21 @@ export default function ProfilePhoto({
 
   return (
     <div className="profile-photo-container">
-      <img
-        src={imagePath}
-        alt={alt}
-        width={1159}
-        height={1356}
-        className={`profile-photo ${className}`.trim()}
-        loading={priority ? "eager" : "lazy"}
-        decoding="async"
-        fetchPriority={priority ? "high" : "auto"}
-        draggable={false}
-        onError={() => setHasError(true)}
-      />
+      <div className="profile-photo-frame">
+        <img
+          src={imagePath}
+          alt={alt}
+          width={1199}
+          height={1312}
+          className={`profile-photo ${className}`.trim()}
+          loading={priority ? "eager" : "lazy"}
+          decoding="async"
+          fetchPriority={priority ? "high" : "auto"}
+          draggable={false}
+          onError={() => setHasError(true)}
+        />
+        <div className="profile-photo-vignette" aria-hidden="true" />
+      </div>
     </div>
   );
 }

@@ -457,7 +457,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                   <p className="text-xs leading-relaxed text-[#F5F2EB]/70">
                     The public site displays the static original photograph at{" "}
                     <span className="font-mono text-[#E5CE93]">
-                      public/assets/images/profile-original.png
+                      public/assets/images/portrait-pio-languisan.png
                     </span>{" "}
                     with zero filters, cropping, or motion effects.
                   </p>

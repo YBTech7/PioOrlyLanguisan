@@ -4,7 +4,6 @@
  */
 
 import { Suspense, lazy, useCallback, useEffect, useState } from 'react';
-import { MessageSquare } from 'lucide-react';
 import {
   INITIAL_FAQS,
   INITIAL_INSIGHTS,
@@ -78,7 +77,10 @@ export default function App() {
 
   const scrollToContact = () => {
     const el = document.getElementById('contact');
-    if (el) el.scrollIntoView({ behavior: 'smooth' });
+    if (el) {
+      const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      el.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'start' });
+    }
   };
 
   const handleSelectServiceForConsult = (
@@ -108,10 +110,10 @@ export default function App() {
   };
 
   return (
-    <div className="relative min-h-screen bg-[#071B20] text-[#F5F2EB]">
+    <div className="relative min-h-screen bg-[#06141E] text-[#F5F2EB]">
       <a
         href="#main-content"
-        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded-lg focus:bg-[#C8A253] focus:px-4 focus:py-2 focus:text-xs focus:font-semibold focus:text-[#071B20]"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded-lg focus:bg-[#C8A253] focus:px-4 focus:py-2 focus:text-xs focus:font-semibold focus:text-[#06141E]"
       >
         Skip to main content
       </a>
@@ -124,16 +126,14 @@ export default function App() {
       />
 
       <main id="main-content" tabIndex={-1} className="focus:outline-none">
-        <HeroSection
-          onBookConsultation={scrollToContact}
-          onOpenAdvisor={() => setAdvisorOpen(true)}
-        />
+        <HeroSection onBookConsultation={scrollToContact} />
 
         <ServicesAndSolutions
           selectedTier={selectedTier}
           onSelectTier={setSelectedTier}
           onSelectServiceForConsult={handleSelectServiceForConsult}
           onApplyAiScope={handleApplyAiScope}
+          onOpenAdvisor={() => setAdvisorOpen(true)}
         />
 
         <ProjectsAndInsights
@@ -150,7 +150,7 @@ export default function App() {
         />
       </main>
 
-      <footer className="relative z-10 border-t border-[#E5CE93]/15 bg-[#051418] py-10">
+      <footer className="relative z-10 border-t border-[#C8A253]/15 bg-[#05111A] py-10">
         <div className="mx-auto flex max-w-[1280px] flex-col justify-between gap-6 px-5 sm:px-8 md:flex-row md:items-center">
           <div className="flex items-center gap-3">
             <BrandMark customLogoUrl={brand.customLogoDataUrl} size={28} />
@@ -158,55 +158,57 @@ export default function App() {
               <p className="font-display text-sm font-semibold text-[#F5F2EB]">
                 Pio Languisan
               </p>
-              <p className="text-xs text-[#F5F2EB]/60">
+              <p className="text-xs text-[#C2D0D6]">
                 Technology · Operations · Analytics
               </p>
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-6 text-xs text-[#F5F2EB]/70">
-            <a href="#about" className="hover:text-[#E5CE93]">
+          <div className="flex flex-wrap items-center gap-6 text-xs text-[#C2D0D6]">
+            <a
+              href="#about"
+              className="rounded hover:text-[#DFC585] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C8A253]"
+            >
               About
             </a>
-            <a href="#services" className="hover:text-[#E5CE93]">
+            <a
+              href="#services"
+              className="rounded hover:text-[#DFC585] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C8A253]"
+            >
               Services
             </a>
-            <a href="#solutions" className="hover:text-[#E5CE93]">
+            <a
+              href="#solutions"
+              className="rounded hover:text-[#DFC585] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C8A253]"
+            >
               Solutions
             </a>
-            <a href="#projects" className="hover:text-[#E5CE93]">
+            <a
+              href="#projects"
+              className="rounded hover:text-[#DFC585] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C8A253]"
+            >
               Projects
             </a>
-            <a href="#contact" className="hover:text-[#E5CE93]">
+            <a
+              href="#contact"
+              className="rounded hover:text-[#DFC585] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C8A253]"
+            >
               Contact
             </a>
             <button
               type="button"
               onClick={() => setAdminOpen(true)}
-              className="font-medium text-[#E5CE93] hover:underline"
+              className="rounded font-medium text-[#DFC585] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C8A253]"
             >
               Admin Console
             </button>
           </div>
 
-          <p className="text-xs text-[#F5F2EB]/50">
+          <p className="text-xs text-[#C2D0D6]/85">
             © {new Date().getFullYear()} Pio Languisan. All rights reserved.
           </p>
         </div>
       </footer>
-
-      {/* Compact Floating Advisor Trigger */}
-      {!advisorOpen && (
-        <button
-          type="button"
-          onClick={() => setAdvisorOpen(true)}
-          aria-label="Open Gemini Service Advisor"
-          className="fixed bottom-5 right-5 z-40 inline-flex items-center gap-2 rounded-full border border-[#E5CE93]/35 bg-[#0D2B32] px-4 py-2.5 text-xs font-semibold text-[#E5CE93] shadow-xl transition-transform duration-150 hover:scale-[1.03] hover:bg-[#144B54] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C8A253]"
-        >
-          <MessageSquare className="h-4 w-4 text-[#C8A253]" aria-hidden="true" />
-          <span className="whitespace-nowrap">AI Service Advisor</span>
-        </button>
-      )}
 
       <Suspense fallback={null}>
         {advisorOpen && (

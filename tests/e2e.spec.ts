@@ -46,15 +46,18 @@ test.describe('Pio Languisan Portfolio Platform E2E', () => {
 
     await expect(page).toHaveTitle(/Pio Languisan/);
     await expect(page.getByRole('heading', { level: 1 })).toContainText(
-      'Operational discipline and intelligent systems'
+      'Executive operations, technical support, and analytics'
     );
+
+    // Ensure no floating fixed AI advisor button overlaps content
+    await expect(page.locator('button.fixed.bottom-5.right-5')).toHaveCount(0);
 
     // Scroll through page so lazy-loaded visual assets load cleanly
     await page.locator('#about img').scrollIntoViewIfNeeded();
     await page.locator('#projects img').first().scrollIntoViewIfNeeded();
     await page.evaluate(() => window.scrollTo(0, 0));
 
-    // Verify all images (original portrait + 3 visual assets) decoded successfully
+    // Verify all images (new portrait + 3 visual assets) decoded successfully
     const imageStates = await page.evaluate(async () => {
       const imgs = Array.from(document.querySelectorAll('img'));
       await Promise.all(
@@ -82,24 +85,34 @@ test.describe('Pio Languisan Portfolio Platform E2E', () => {
       expect(img.naturalWidth, `Image broken (naturalWidth 0): ${img.src}`).toBeGreaterThan(0);
     }
 
-    // Verify original portrait preserves static non-distorted CSS rules
-    const portrait = page.locator('img.profile-photo');
+    // Verify new portrait alt text, filename, natural aspect, and static non-distorted CSS rules
+    const portrait = page.getByAltText('Portrait of Pio Languisan');
     await expect(portrait).toBeVisible();
+    await expect(portrait).toHaveAttribute('src', /assets\/images\/portrait-pio-languisan\.png$/);
     const portraitStyles = await portrait.evaluate((el) => {
       const style = window.getComputedStyle(el);
+      const rect = el.getBoundingClientRect();
       return {
         borderRadius: style.borderRadius,
         filter: style.filter,
         transform: style.transform,
         animationName: style.animationName,
         opacity: style.opacity,
+        rectWidth: rect.width,
+        rectHeight: rect.height,
+        naturalWidth: (el as HTMLImageElement).naturalWidth,
+        naturalHeight: (el as HTMLImageElement).naturalHeight,
       };
     });
+    expect(portraitStyles.naturalWidth).toBe(1199);
+    expect(portraitStyles.naturalHeight).toBe(1312);
     expect(portraitStyles.borderRadius).toBe('0px');
     expect(portraitStyles.filter).toBe('none');
     expect(portraitStyles.transform).toBe('none');
     expect(portraitStyles.animationName).toBe('none');
     expect(portraitStyles.opacity).toBe('1');
+    expect(portraitStyles.rectWidth).toBeGreaterThan(200);
+    expect(portraitStyles.rectHeight).toBeGreaterThan(220);
 
     // Verify zero console errors, page errors, and broken assets
     expect(consoleErrors, `Console errors: ${consoleErrors.join('\n')}`).toEqual([]);
@@ -121,11 +134,16 @@ test.describe('Pio Languisan Portfolio Platform E2E', () => {
     await expect(skipLink).toBeFocused();
     await expect(page.locator('main#main-content')).toBeVisible();
 
-    // Check section scroll-mt-20
+    // Check section scroll-mt-20 and navigation heading visibility below sticky 64px header
     const aboutScrollMargin = await page
       .locator('#about')
       .evaluate((el) => window.getComputedStyle(el).scrollMarginTop);
     expect(aboutScrollMargin).toBe('80px');
+
+    await page.getByRole('navigation', { name: 'Primary Navigation' }).getByRole('link', { name: 'Services' }).click();
+    await page.waitForTimeout(300);
+    const servicesHeadingTop = await page.locator('#services h2').evaluate((el) => el.getBoundingClientRect().top);
+    expect(servicesHeadingTop).toBeGreaterThanOrEqual(64);
 
     // Client Tier tablist switching
     const enterpriseTab = page.getByRole('tab', { name: 'Enterprise Clients' });
@@ -158,6 +176,27 @@ test.describe('Pio Languisan Portfolio Platform E2E', () => {
     await expect(secondFaq).toHaveAttribute('aria-expanded', 'false');
     await secondFaq.click();
     await expect(secondFaq).toHaveAttribute('aria-expanded', 'true');
+
+    // Header Book Consultation CTA scrolls contact section into view
+    await page.getByRole('banner').getByRole('button', { name: 'Book Consultation' }).click();
+    await page.waitForTimeout(300);
+    const contactTop = await page.locator('#contact h2').evaluate((el) => el.getBoundingClientRect().top);
+    expect(contactTop).toBeGreaterThanOrEqual(64);
+    expect(contactTop).toBeLessThan(900);
+
+    // Mobile menu toggle, keyboard focus & drawer navigation
+    await page.setViewportSize({ width: 390, height: 844 });
+    const mobileToggle = page.getByRole('button', { name: 'Open navigation menu' });
+    await mobileToggle.focus();
+    await expect(mobileToggle).toBeFocused();
+    await mobileToggle.click();
+    const mobileDrawer = page.locator('#mobile-navigation-drawer');
+    await expect(mobileDrawer).toBeVisible();
+    const mobileAbout = mobileDrawer.getByRole('link', { name: 'About' });
+    await mobileAbout.focus();
+    await expect(mobileAbout).toBeFocused();
+    await mobileAbout.click();
+    await expect(mobileDrawer).toHaveCount(0);
   });
 
   test('validates consultation submission, AI scope + drawer fallbacks, and Admin Portal without disclosed passcode', async ({

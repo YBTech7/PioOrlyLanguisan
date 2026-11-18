@@ -95,27 +95,24 @@ export const ConsultationSection: React.FC<ConsultationSectionProps> = ({
       <div className="mx-auto max-w-[1280px] px-5 sm:px-8">
         <div className="grid grid-cols-1 gap-10 lg:grid-cols-12 lg:gap-12">
           <div className="lg:col-span-5 space-y-5">
-            <p className="text-xs font-medium tracking-[0.14em] uppercase text-[#E5CE93]">
+            <p className="text-xs font-medium tracking-[0.14em] uppercase text-[#DFC585]">
               Consultation & Contact
             </p>
-            <h2
-              className="font-display text-3xl font-semibold tracking-tight text-[#F5F2EB] sm:text-4xl"
-              style={{ textWrap: 'balance' }}
-            >
+            <h2 className="font-display text-3xl font-semibold tracking-tight text-[#F5F2EB] sm:text-4xl text-balance">
               Start a structured discovery conversation.
             </h2>
-            <p className="text-base leading-relaxed text-[#F5F2EB]/80">
-              Whether you need hands-on technical support governance, executive KPI analytics,
-              account management workflows, or a custom web platform, submit your parameters below.
+            <p className="text-base leading-relaxed text-[#C2D0D6]">
+              Share your priorities across technical support, customer operations, analytics,
+              account management, or custom web creation below.
             </p>
 
-            <div className="space-y-4 border-t border-[#E5CE93]/15 pt-6 text-sm text-[#F5F2EB]/75">
+            <div className="space-y-4 border-t border-[#C8A253]/15 pt-6 text-sm text-[#C2D0D6]">
               <div>
-                <p className="text-xs font-medium text-[#E5CE93]">Direct Inquiries</p>
+                <p className="text-xs font-medium text-[#DFC585]">Direct Inquiries</p>
                 <p className="mt-1 font-mono text-sm text-[#F5F2EB]">pio.executive@gmail.com</p>
               </div>
               <div>
-                <p className="text-xs font-medium text-[#E5CE93]">Response Commitment</p>
+                <p className="text-xs font-medium text-[#DFC585]">Response Commitment</p>
                 <p className="mt-1">
                   Every consultation request receives an immediate tracking reference and a tailored
                   agenda within 1 business day.
@@ -125,22 +122,22 @@ export const ConsultationSection: React.FC<ConsultationSectionProps> = ({
           </div>
 
           <div className="lg:col-span-7">
-            <div className="rounded-2xl border border-[#E5CE93]/20 bg-[#0D2B32]/90 p-6 sm:p-8">
+            <div className="rounded-2xl border border-[#C8A253]/20 bg-[#0A202B]/95 p-6 sm:p-8">
               {submittedRecord ? (
                 <div className="space-y-4 py-4">
-                  <div className="flex items-center gap-3 text-[#E5CE93]">
+                  <div className="flex items-center gap-3 text-[#DFC585]">
                     <CheckCircle2 className="h-6 w-6" aria-hidden="true" />
                     <h3 className="font-display text-xl font-semibold text-[#F5F2EB]">
                       Consultation Request Recorded
                     </h3>
                   </div>
-                  <p className="text-sm leading-relaxed text-[#F5F2EB]/80">
+                  <p className="text-sm leading-relaxed text-[#C2D0D6]">
                     Thank you, {submittedRecord.name}. Your inquiry has been logged for review.
                   </p>
-                  <div className="rounded-xl border border-[#E5CE93]/15 bg-[#071B20] p-4 text-xs text-[#F5F2EB]/80 space-y-1.5">
+                  <div className="rounded-xl border border-[#C8A253]/18 bg-[#06141E] p-4 text-xs text-[#C2D0D6] space-y-1.5">
                     <p>
                       Reference ID:{' '}
-                      <span className="font-mono font-semibold text-[#E5CE93]">
+                      <span className="font-mono font-semibold text-[#DFC585]">
                         {submittedRecord.id}
                       </span>
                     </p>
@@ -151,7 +148,7 @@ export const ConsultationSection: React.FC<ConsultationSectionProps> = ({
                   <button
                     type="button"
                     onClick={() => setSubmittedRecord(null)}
-                    className="rounded-lg border border-[#E5CE93]/25 px-4 py-2 text-xs font-semibold text-[#E5CE93] hover:bg-[#144B54]"
+                    className="rounded-lg border border-[#C8A253]/30 px-4 py-2 text-xs font-semibold text-[#DFC585] hover:bg-[#123846] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C8A253]"
                   >
                     Submit Another Request
                   </button>
@@ -174,7 +171,7 @@ export const ConsultationSection: React.FC<ConsultationSectionProps> = ({
                     <div>
                       <label
                         htmlFor="consult-name"
-                        className="block text-xs font-medium text-[#E5CE93]"
+                        className="block text-xs font-medium text-[#DFC585]"
                       >
                         Full Name *
                       </label>
@@ -185,13 +182,13 @@ export const ConsultationSection: React.FC<ConsultationSectionProps> = ({
                         value={name}
                         onChange={(e) => setName(e.target.value)}
                         placeholder="Alex Rivera"
-                        className="mt-1.5 min-h-[42px] w-full rounded-lg border border-[#E5CE93]/20 bg-[#071B20] px-3.5 py-2 text-sm text-[#F5F2EB] placeholder:text-[#F5F2EB]/35 focus:border-[#C8A253] focus:outline-none"
+                        className="mt-1.5 min-h-[42px] w-full rounded-lg border border-[#C8A253]/25 bg-[#06141E] px-3.5 py-2 text-sm text-[#F5F2EB] placeholder:text-[#F5F2EB]/45 focus:border-[#C8A253] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#C8A253]"
                       />
                     </div>
                     <div>
                       <label
                         htmlFor="consult-email"
-                        className="block text-xs font-medium text-[#E5CE93]"
+                        className="block text-xs font-medium text-[#DFC585]"
                       >
                         Email Address *
                       </label>
@@ -202,7 +199,7 @@ export const ConsultationSection: React.FC<ConsultationSectionProps> = ({
                         value={email}
                         onChange={(e) => setEmail(e.target.value)}
                         placeholder="alex@company.com"
-                        className="mt-1.5 min-h-[42px] w-full rounded-lg border border-[#E5CE93]/20 bg-[#071B20] px-3.5 py-2 text-sm text-[#F5F2EB] placeholder:text-[#F5F2EB]/35 focus:border-[#C8A253] focus:outline-none"
+                        className="mt-1.5 min-h-[42px] w-full rounded-lg border border-[#C8A253]/25 bg-[#06141E] px-3.5 py-2 text-sm text-[#F5F2EB] placeholder:text-[#F5F2EB]/45 focus:border-[#C8A253] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#C8A253]"
                       />
                     </div>
                   </div>
@@ -211,7 +208,7 @@ export const ConsultationSection: React.FC<ConsultationSectionProps> = ({
                     <div>
                       <label
                         htmlFor="consult-company"
-                        className="block text-xs font-medium text-[#E5CE93]"
+                        className="block text-xs font-medium text-[#DFC585]"
                       >
                         Organization / Practice
                       </label>
@@ -221,13 +218,13 @@ export const ConsultationSection: React.FC<ConsultationSectionProps> = ({
                         value={company}
                         onChange={(e) => setCompany(e.target.value)}
                         placeholder="Optional company or team name"
-                        className="mt-1.5 min-h-[42px] w-full rounded-lg border border-[#E5CE93]/20 bg-[#071B20] px-3.5 py-2 text-sm text-[#F5F2EB] placeholder:text-[#F5F2EB]/35 focus:border-[#C8A253] focus:outline-none"
+                        className="mt-1.5 min-h-[42px] w-full rounded-lg border border-[#C8A253]/25 bg-[#06141E] px-3.5 py-2 text-sm text-[#F5F2EB] placeholder:text-[#F5F2EB]/45 focus:border-[#C8A253] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#C8A253]"
                       />
                     </div>
                     <div>
                       <label
                         htmlFor="consult-tier"
-                        className="block text-xs font-medium text-[#E5CE93]"
+                        className="block text-xs font-medium text-[#DFC585]"
                       >
                         Organization Tier
                       </label>
@@ -235,7 +232,7 @@ export const ConsultationSection: React.FC<ConsultationSectionProps> = ({
                         id="consult-tier"
                         value={tier}
                         onChange={(e) => setTier(e.target.value as ClientTierId)}
-                        className="mt-1.5 min-h-[42px] w-full rounded-lg border border-[#E5CE93]/20 bg-[#071B20] px-3.5 py-2 text-sm text-[#F5F2EB] focus:border-[#C8A253] focus:outline-none"
+                        className="mt-1.5 min-h-[42px] w-full rounded-lg border border-[#C8A253]/25 bg-[#06141E] px-3.5 py-2 text-sm text-[#F5F2EB] focus:border-[#C8A253] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#C8A253]"
                       >
                         {CLIENT_TIER_SOLUTIONS.map((t) => (
                           <option key={t.id} value={t.id}>
@@ -250,7 +247,7 @@ export const ConsultationSection: React.FC<ConsultationSectionProps> = ({
                     <div>
                       <label
                         htmlFor="consult-service"
-                        className="block text-xs font-medium text-[#E5CE93]"
+                        className="block text-xs font-medium text-[#DFC585]"
                       >
                         Primary Service Domain
                       </label>
@@ -258,7 +255,7 @@ export const ConsultationSection: React.FC<ConsultationSectionProps> = ({
                         id="consult-service"
                         value={serviceDomain}
                         onChange={(e) => setServiceDomain(e.target.value as ServiceDomainId)}
-                        className="mt-1.5 min-h-[42px] w-full rounded-lg border border-[#E5CE93]/20 bg-[#071B20] px-3.5 py-2 text-sm text-[#F5F2EB] focus:border-[#C8A253] focus:outline-none"
+                        className="mt-1.5 min-h-[42px] w-full rounded-lg border border-[#C8A253]/25 bg-[#06141E] px-3.5 py-2 text-sm text-[#F5F2EB] focus:border-[#C8A253] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#C8A253]"
                       >
                         {SERVICE_OFFERINGS.map((s) => (
                           <option key={s.id} value={s.id}>
@@ -270,7 +267,7 @@ export const ConsultationSection: React.FC<ConsultationSectionProps> = ({
                     <div>
                       <label
                         htmlFor="consult-timeline"
-                        className="block text-xs font-medium text-[#E5CE93]"
+                        className="block text-xs font-medium text-[#DFC585]"
                       >
                         Target Timeline
                       </label>
@@ -278,7 +275,7 @@ export const ConsultationSection: React.FC<ConsultationSectionProps> = ({
                         id="consult-timeline"
                         value={timeline}
                         onChange={(e) => setTimeline(e.target.value)}
-                        className="mt-1.5 min-h-[42px] w-full rounded-lg border border-[#E5CE93]/20 bg-[#071B20] px-3.5 py-2 text-sm text-[#F5F2EB] focus:border-[#C8A253] focus:outline-none"
+                        className="mt-1.5 min-h-[42px] w-full rounded-lg border border-[#C8A253]/25 bg-[#06141E] px-3.5 py-2 text-sm text-[#F5F2EB] focus:border-[#C8A253] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#C8A253]"
                       >
                         <option value="Immediate (1–2 weeks)">Immediate (1–2 weeks)</option>
                         <option value="Within 30 days">Within 30 days</option>
@@ -291,7 +288,7 @@ export const ConsultationSection: React.FC<ConsultationSectionProps> = ({
                   <div>
                     <label
                       htmlFor="consult-message"
-                      className="block text-xs font-medium text-[#E5CE93]"
+                      className="block text-xs font-medium text-[#DFC585]"
                     >
                       Project Context & Objectives *
                     </label>
@@ -302,7 +299,7 @@ export const ConsultationSection: React.FC<ConsultationSectionProps> = ({
                       value={message}
                       onChange={(e) => setMessage(e.target.value)}
                       placeholder="Briefly describe your current systems, operational bottleneck, or target deliverables..."
-                      className="mt-1.5 w-full rounded-lg border border-[#E5CE93]/20 bg-[#071B20] px-3.5 py-2.5 text-sm text-[#F5F2EB] placeholder:text-[#F5F2EB]/35 focus:border-[#C8A253] focus:outline-none"
+                      className="mt-1.5 w-full rounded-lg border border-[#C8A253]/25 bg-[#06141E] px-3.5 py-2.5 text-sm text-[#F5F2EB] placeholder:text-[#F5F2EB]/45 focus:border-[#C8A253] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#C8A253]"
                     />
                   </div>
 
@@ -316,7 +313,7 @@ export const ConsultationSection: React.FC<ConsultationSectionProps> = ({
                     <button
                       type="submit"
                       disabled={submitting}
-                      className="inline-flex min-h-[44px] items-center gap-2 rounded-lg bg-[#C8A253] px-6 py-2.5 text-sm font-semibold text-[#071B20] whitespace-nowrap transition-colors hover:bg-[#E5CE93] disabled:opacity-60"
+                      className="inline-flex min-h-[44px] items-center gap-2 rounded-lg bg-[#C8A253] px-6 py-2.5 text-sm font-semibold text-[#06141E] whitespace-nowrap transition-colors hover:bg-[#DFC585] disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#F5F2EB]"
                     >
                       <Send className="h-4 w-4" aria-hidden="true" />
                       <span>{submitting ? 'Submitting...' : 'Submit Consultation Request'}</span>

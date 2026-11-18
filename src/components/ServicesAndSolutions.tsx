@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ArrowUpRight, Check, Sparkles } from 'lucide-react';
+import { ArrowUpRight, Check, MessageSquare, Sparkles } from 'lucide-react';
 import {
   CLIENT_TIER_SOLUTIONS,
   NETWORK_VISUAL_URL,
@@ -18,6 +18,7 @@ interface ServicesAndSolutionsProps {
   onSelectTier: (tier: ClientTierId) => void;
   onSelectServiceForConsult: (serviceId: ServiceDomainId, tierId?: ClientTierId) => void;
   onApplyAiScope: (scope: AiScopeRecommendation) => void;
+  onOpenAdvisor: () => void;
 }
 
 const TIER_CHART_SERIES: Record<
@@ -80,6 +81,7 @@ export const ServicesAndSolutions: React.FC<ServicesAndSolutionsProps> = ({
   onSelectTier,
   onSelectServiceForConsult,
   onApplyAiScope,
+  onOpenAdvisor,
 }) => {
   const [goalInput, setGoalInput] = useState('');
   const [scopeLoading, setScopeLoading] = useState(false);
@@ -117,58 +119,53 @@ export const ServicesAndSolutions: React.FC<ServicesAndSolutionsProps> = ({
   return (
     <>
       {/* About & Practice Philosophy */}
-      <section id="about" className="scroll-mt-20 relative z-10 border-b border-[#E5CE93]/15 py-16 sm:py-20">
+      <section
+        id="about"
+        className="scroll-mt-20 relative z-10 border-b border-[#C8A253]/15 py-16 sm:py-20"
+      >
         <div className="mx-auto max-w-[1280px] px-5 sm:px-8">
           <div className="grid grid-cols-1 items-center gap-10 lg:grid-cols-12 lg:gap-12">
             <div className="lg:col-span-6 space-y-5">
-              <p className="text-xs font-medium tracking-[0.14em] uppercase text-[#E5CE93]">
+              <p className="text-xs font-medium tracking-[0.14em] uppercase text-[#DFC585]">
                 Executive Profile
               </p>
-              <h2
-                className="font-display text-3xl font-semibold tracking-tight text-[#F5F2EB] sm:text-4xl"
-                style={{ textWrap: 'balance' }}
-              >
+              <h2 className="font-display text-3xl font-semibold tracking-tight text-[#F5F2EB] sm:text-4xl text-balance">
                 Where hands-on operations meet clear technical execution.
               </h2>
-              <p className="text-base leading-relaxed text-[#F5F2EB]/80">
-                Modern organizations rarely stall from a lack of tools—they stall when customer
-                support queues, data reporting, account handoffs, and web systems operate in
-                disconnected silos.
-              </p>
-              <p className="text-base leading-relaxed text-[#F5F2EB]/75">
-                Drawing from direct experience across technical support, customer service, data
-                analytics, administrative operations, strategic account management, and web creation,
-                Pio Languisan builds cohesive systems that scale cleanly from solo practices to
-                enterprise teams.
+              <p className="text-base leading-relaxed text-[#C2D0D6]">
+                Teams rarely stall from a lack of software—they stall when technical support,
+                reporting, account handoffs, and web tools work in disconnected silos. Drawing from
+                direct delivery experience across all six disciplines, I build cohesive systems
+                that scale cleanly from solo practices to enterprise teams.
               </p>
 
-              <div className="grid grid-cols-1 gap-4 border-t border-[#E5CE93]/15 pt-6 sm:grid-cols-3">
+              <div className="grid grid-cols-1 gap-4 border-t border-[#C8A253]/15 pt-6 sm:grid-cols-3">
                 <div>
-                  <p className="font-mono text-xs text-[#C8A253]">01</p>
+                  <p className="font-mono text-xs text-[#DFC585]">01</p>
                   <p className="mt-1 text-sm font-semibold text-[#F5F2EB]">Diagnose</p>
-                  <p className="mt-1 text-xs leading-relaxed text-[#F5F2EB]/65">
-                    Audit queues, spreadsheets, and client handoffs for hidden friction.
+                  <p className="mt-1 text-xs leading-relaxed text-[#C2D0D6]">
+                    Audit queues, spreadsheets, and handoffs for hidden bottlenecks.
                   </p>
                 </div>
                 <div>
-                  <p className="font-mono text-xs text-[#C8A253]">02</p>
+                  <p className="font-mono text-xs text-[#DFC585]">02</p>
                   <p className="mt-1 text-sm font-semibold text-[#F5F2EB]">Structure</p>
-                  <p className="mt-1 text-xs leading-relaxed text-[#F5F2EB]/65">
-                    Establish clean SOPs, SLA governance, and normalized data models.
+                  <p className="mt-1 text-xs leading-relaxed text-[#C2D0D6]">
+                    Establish clean SOPs, SLA governance, and normalized reporting.
                   </p>
                 </div>
                 <div>
-                  <p className="font-mono text-xs text-[#C8A253]">03</p>
+                  <p className="font-mono text-xs text-[#DFC585]">03</p>
                   <p className="mt-1 text-sm font-semibold text-[#F5F2EB]">Automate</p>
-                  <p className="mt-1 text-xs leading-relaxed text-[#F5F2EB]/65">
-                    Deploy web portals, executive reporting, and Gemini-assisted workflows.
+                  <p className="mt-1 text-xs leading-relaxed text-[#C2D0D6]">
+                    Deploy custom web portals, dashboards, and AI-guided workflows.
                   </p>
                 </div>
               </div>
             </div>
 
             <div className="lg:col-span-6">
-              <div className="overflow-hidden rounded-2xl border border-[#E5CE93]/20 bg-[#0D2B32]">
+              <div className="overflow-hidden rounded-2xl border border-[#C8A253]/20 bg-[#0A202B]">
                 <img
                   src={resolveAssetUrl(NETWORK_VISUAL_URL)}
                   alt="Distributed network topology representing interconnected operational systems"
@@ -176,9 +173,9 @@ export const ServicesAndSolutions: React.FC<ServicesAndSolutionsProps> = ({
                   loading="lazy"
                   className="aspect-video w-full object-cover"
                 />
-                <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[#E5CE93]/15 px-5 py-3.5 text-xs text-[#F5F2EB]/75">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[#C8A253]/15 px-5 py-3.5 text-xs text-[#C2D0D6]">
                   <span>Connected Operations Architecture</span>
-                  <span className="text-[#E5CE93]">Support · Analytics · Accounts · Web</span>
+                  <span className="text-[#DFC585]">Support · Analytics · Accounts · Web</span>
                 </div>
               </div>
             </div>
@@ -186,24 +183,23 @@ export const ServicesAndSolutions: React.FC<ServicesAndSolutionsProps> = ({
         </div>
       </section>
 
-      {/* Core Services Asymmetric Bento Grid */}
-      <section id="services" className="scroll-mt-20 relative z-10 border-b border-[#E5CE93]/15 py-16 sm:py-20">
+      {/* Core Services Grid */}
+      <section
+        id="services"
+        className="scroll-mt-20 relative z-10 border-b border-[#C8A253]/15 py-16 sm:py-20"
+      >
         <div className="mx-auto max-w-[1280px] px-5 sm:px-8">
-          <div className="flex flex-col justify-between gap-4 border-b border-[#E5CE93]/15 pb-8 md:flex-row md:items-end">
+          <div className="flex flex-col justify-between gap-4 border-b border-[#C8A253]/15 pb-8 md:flex-row md:items-end">
             <div className="max-w-2xl">
-              <p className="text-xs font-medium tracking-[0.14em] uppercase text-[#E5CE93]">
+              <p className="text-xs font-medium tracking-[0.14em] uppercase text-[#DFC585]">
                 Core Services
               </p>
-              <h2
-                className="mt-2 font-display text-3xl font-semibold tracking-tight text-[#F5F2EB] sm:text-4xl"
-                style={{ textWrap: 'balance' }}
-              >
+              <h2 className="mt-2 font-display text-3xl font-semibold tracking-tight text-[#F5F2EB] sm:text-4xl text-balance">
                 Six practice disciplines built for measurable delivery.
               </h2>
             </div>
-            <p className="max-w-md text-sm leading-relaxed text-[#F5F2EB]/70">
-              Select any capability below to pre-configure a focused consultation brief tailored to
-              your operational priorities.
+            <p className="max-w-md text-sm leading-relaxed text-[#C2D0D6]">
+              Select any discipline to pre-fill a focused consultation brief for your team.
             </p>
           </div>
 
@@ -214,28 +210,28 @@ export const ServicesAndSolutions: React.FC<ServicesAndSolutionsProps> = ({
               return (
                 <article
                   key={service.id}
-                  className={`${colSpan} flex flex-col justify-between rounded-2xl border border-[#E5CE93]/15 bg-[#0D2B32]/85 p-6 sm:p-7 transition-colors duration-150 hover:border-[#C8A253]/45`}
+                  className={`${colSpan} flex flex-col justify-between rounded-2xl border border-[#C8A253]/15 bg-[#0A202B]/90 p-6 sm:p-7 transition-colors duration-150 hover:border-[#C8A253]/40`}
                 >
                   <div>
-                    <div className="flex items-center justify-between gap-4 text-xs text-[#F5F2EB]/65">
-                      <span className="font-mono tabular-nums text-[#E5CE93]">
+                    <div className="flex items-center justify-between gap-4 text-xs text-[#C2D0D6]">
+                      <span className="font-mono tabular-nums text-[#DFC585]">
                         {service.index}
                       </span>
                       <span>{service.cadence}</span>
                     </div>
 
                     <h3 className="mt-3 font-display text-xl font-semibold text-[#F5F2EB]">
-                      {service.index}. {service.title}
+                      {service.title}
                     </h3>
 
-                    <p className="mt-2.5 text-sm leading-relaxed text-[#F5F2EB]/75">
+                    <p className="mt-2.5 text-sm leading-relaxed text-[#C2D0D6]">
                       {service.summary}
                     </p>
 
-                    <div className="mt-5 grid grid-cols-1 gap-4 border-t border-[#E5CE93]/10 pt-5 sm:grid-cols-2">
+                    <div className="mt-5 grid grid-cols-1 gap-4 border-t border-[#C8A253]/12 pt-5 sm:grid-cols-2">
                       <div>
-                        <p className="text-xs font-medium text-[#E5CE93]">Operational Outcomes</p>
-                        <ul className="mt-2 space-y-1.5 text-xs leading-relaxed text-[#F5F2EB]/75">
+                        <p className="text-xs font-medium text-[#DFC585]">Operational Outcomes</p>
+                        <ul className="mt-2 space-y-1.5 text-xs leading-relaxed text-[#C2D0D6]">
                           {service.outcomes.map((outcome) => (
                             <li key={outcome} className="flex items-start gap-2">
                               <Check
@@ -248,8 +244,8 @@ export const ServicesAndSolutions: React.FC<ServicesAndSolutionsProps> = ({
                         </ul>
                       </div>
                       <div>
-                        <p className="text-xs font-medium text-[#E5CE93]">Key Deliverables</p>
-                        <ul className="mt-2 space-y-1.5 text-xs leading-relaxed text-[#F5F2EB]/70">
+                        <p className="text-xs font-medium text-[#DFC585]">Key Deliverables</p>
+                        <ul className="mt-2 space-y-1.5 text-xs leading-relaxed text-[#C2D0D6]">
                           {service.deliverables.map((del) => (
                             <li key={del}>· {del}</li>
                           ))}
@@ -258,11 +254,11 @@ export const ServicesAndSolutions: React.FC<ServicesAndSolutionsProps> = ({
                     </div>
                   </div>
 
-                  <div className="mt-6 flex items-center justify-end border-t border-[#E5CE93]/10 pt-4">
+                  <div className="mt-6 flex items-center justify-end border-t border-[#C8A253]/12 pt-4">
                     <button
                       type="button"
                       onClick={() => onSelectServiceForConsult(service.id)}
-                      className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#E5CE93] whitespace-nowrap transition-colors hover:text-[#F5F2EB] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C8A253] rounded px-1 py-0.5"
+                      className="inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs font-semibold text-[#DFC585] whitespace-nowrap transition-colors hover:text-[#F5F2EB] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C8A253]"
                     >
                       <span>Scope {service.shortTitle}</span>
                       <ArrowUpRight className="h-3.5 w-3.5" aria-hidden="true" />
@@ -276,17 +272,17 @@ export const ServicesAndSolutions: React.FC<ServicesAndSolutionsProps> = ({
       </section>
 
       {/* Business Solutions & Interactive Analytics + AI Scope */}
-      <section id="solutions" className="scroll-mt-20 relative z-10 border-b border-[#E5CE93]/15 py-16 sm:py-20">
+      <section
+        id="solutions"
+        className="scroll-mt-20 relative z-10 border-b border-[#C8A253]/15 py-16 sm:py-20"
+      >
         <div className="mx-auto max-w-[1280px] px-5 sm:px-8">
           <div className="flex flex-col justify-between gap-6 lg:flex-row lg:items-end">
             <div className="max-w-2xl">
-              <p className="text-xs font-medium tracking-[0.14em] uppercase text-[#E5CE93]">
+              <p className="text-xs font-medium tracking-[0.14em] uppercase text-[#DFC585]">
                 Business Solutions
               </p>
-              <h2
-                className="mt-2 font-display text-3xl font-semibold tracking-tight text-[#F5F2EB] sm:text-4xl"
-                style={{ textWrap: 'balance' }}
-              >
+              <h2 className="mt-2 font-display text-3xl font-semibold tracking-tight text-[#F5F2EB] sm:text-4xl text-balance">
                 Structured engagement models for every stage of growth.
               </h2>
             </div>
@@ -294,7 +290,7 @@ export const ServicesAndSolutions: React.FC<ServicesAndSolutionsProps> = ({
             <div
               role="tablist"
               aria-label="Client Organization Tiers"
-              className="inline-flex flex-wrap gap-1 rounded-xl border border-[#E5CE93]/15 bg-[#0D2B32] p-1"
+              className="inline-flex flex-wrap gap-1.5 rounded-xl border border-[#C8A253]/18 bg-[#0A202B] p-1"
             >
               {CLIENT_TIER_SOLUTIONS.map((tier) => {
                 const isActive = tier.id === selectedTier;
@@ -307,8 +303,8 @@ export const ServicesAndSolutions: React.FC<ServicesAndSolutionsProps> = ({
                     onClick={() => onSelectTier(tier.id)}
                     className={`rounded-lg px-3.5 py-2 text-xs font-semibold whitespace-nowrap shrink-0 transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C8A253] ${
                       isActive
-                        ? 'bg-[#C8A253] text-[#071B20]'
-                        : 'text-[#F5F2EB]/75 hover:text-[#F5F2EB]'
+                        ? 'border border-[#C8A253]/65 bg-[#123846] text-[#F5F2EB]'
+                        : 'border border-transparent text-[#C2D0D6] hover:text-[#F5F2EB]'
                     }`}
                   >
                     {tier.label}
@@ -320,35 +316,35 @@ export const ServicesAndSolutions: React.FC<ServicesAndSolutionsProps> = ({
 
           <div className="mt-10 grid grid-cols-1 gap-8 lg:grid-cols-12">
             {/* Tier Solution Brief */}
-            <div className="flex flex-col justify-between rounded-2xl border border-[#E5CE93]/15 bg-[#0D2B32]/85 p-7 lg:col-span-6">
+            <div className="flex flex-col justify-between rounded-2xl border border-[#C8A253]/15 bg-[#0A202B]/90 p-7 lg:col-span-6">
               <div>
-                <p className="text-xs text-[#E5CE93]">
+                <p className="text-xs text-[#DFC585]">
                   {activeSolution.label} · {activeSolution.typicalTimeline}
                 </p>
                 <h3 className="mt-2 font-display text-2xl font-semibold text-[#F5F2EB]">
                   {activeSolution.headline}
                 </h3>
-                <p className="mt-3 text-sm leading-relaxed text-[#F5F2EB]/80">
+                <p className="mt-3 text-sm leading-relaxed text-[#C2D0D6]">
                   {activeSolution.description}
                 </p>
 
-                <div className="mt-6 space-y-4 border-t border-[#E5CE93]/15 pt-5">
+                <div className="mt-6 space-y-4 border-t border-[#C8A253]/15 pt-5">
                   <div>
-                    <p className="text-xs font-medium text-[#E5CE93]">Recommended Pillars</p>
-                    <p className="mt-1 text-sm text-[#F5F2EB]/85">
+                    <p className="text-xs font-medium text-[#DFC585]">Recommended Pillars</p>
+                    <p className="mt-1 text-sm text-[#F5F2EB]">
                       {activeSolution.recommendedServices.join(' · ')}
                     </p>
                   </div>
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     <div>
-                      <p className="text-xs font-medium text-[#E5CE93]">Engagement Cadence</p>
-                      <p className="mt-1 text-sm text-[#F5F2EB]/80">
+                      <p className="text-xs font-medium text-[#DFC585]">Engagement Cadence</p>
+                      <p className="mt-1 text-sm text-[#C2D0D6]">
                         {activeSolution.engagementModel}
                       </p>
                     </div>
                     <div>
-                      <p className="text-xs font-medium text-[#E5CE93]">Anchor Deliverable</p>
-                      <p className="mt-1 text-sm text-[#F5F2EB]/80">
+                      <p className="text-xs font-medium text-[#DFC585]">Anchor Deliverable</p>
+                      <p className="mt-1 text-sm text-[#C2D0D6]">
                         {activeSolution.keyDeliverable}
                       </p>
                     </div>
@@ -356,8 +352,8 @@ export const ServicesAndSolutions: React.FC<ServicesAndSolutionsProps> = ({
                 </div>
               </div>
 
-              <div className="mt-8 flex items-center justify-between border-t border-[#E5CE93]/15 pt-5">
-                <span className="text-xs text-[#F5F2EB]/65">
+              <div className="mt-8 flex flex-wrap items-center justify-between gap-3 border-t border-[#C8A253]/15 pt-5">
+                <span className="text-xs text-[#C2D0D6]">
                   Tailored discovery call included
                 </span>
                 <button
@@ -365,59 +361,59 @@ export const ServicesAndSolutions: React.FC<ServicesAndSolutionsProps> = ({
                   onClick={() =>
                     onSelectServiceForConsult('technical-support', activeSolution.id)
                   }
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-[#C8A253] px-4 py-2 text-xs font-semibold text-[#071B20] whitespace-nowrap transition-colors hover:bg-[#E5CE93]"
+                  className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border border-[#C8A253]/45 bg-[#123846] px-4 py-2 text-xs font-semibold text-[#F5F2EB] whitespace-nowrap transition-colors hover:border-[#C8A253] hover:text-[#DFC585] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C8A253]"
                 >
                   <span>Request {activeSolution.label} Scope</span>
-                  <ArrowUpRight className="h-3.5 w-3.5" aria-hidden="true" />
+                  <ArrowUpRight className="h-3.5 w-3.5 text-[#DFC585]" aria-hidden="true" />
                 </button>
               </div>
             </div>
 
             {/* Interactive Operations & Analytics Preview */}
-            <div className="flex flex-col justify-between rounded-2xl border border-[#E5CE93]/15 bg-[#0D2B32]/85 p-7 lg:col-span-6">
+            <div className="flex flex-col justify-between rounded-2xl border border-[#C8A253]/15 bg-[#0A202B]/90 p-7 lg:col-span-6">
               <div>
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <p className="text-xs text-[#E5CE93]">Analytics & SLA Model</p>
+                    <p className="text-xs text-[#DFC585]">Analytics & SLA Model</p>
                     <h3 className="mt-1 font-display text-lg font-semibold text-[#F5F2EB]">
                       {chartData.label}
                     </h3>
                   </div>
                   <div className="flex items-center gap-5 text-right">
                     <div>
-                      <p className="font-mono text-lg font-semibold tabular-nums text-[#E5CE93]">
+                      <p className="font-mono text-lg font-semibold tabular-nums text-[#DFC585]">
                         {chartData.slaTarget}
                       </p>
-                      <p className="text-[11px] text-[#F5F2EB]/60">Target SLA</p>
+                      <p className="text-[11px] text-[#C2D0D6]">Target SLA</p>
                     </div>
                     <div>
                       <p className="font-mono text-lg font-semibold tabular-nums text-[#F5F2EB]">
                         {chartData.cycleReduction}
                       </p>
-                      <p className="text-[11px] text-[#F5F2EB]/60">Cycle Latency</p>
+                      <p className="text-[11px] text-[#C2D0D6]">Cycle Latency</p>
                     </div>
                   </div>
                 </div>
 
                 {/* Clean Tabular Bar Visualization */}
-                <div className="mt-6 space-y-4 border-t border-[#E5CE93]/10 pt-5">
+                <div className="mt-6 space-y-4 border-t border-[#C8A253]/12 pt-5">
                   {chartData.points.map((pt) => (
                     <div key={pt.quarter} className="space-y-1.5">
                       <div className="flex items-center justify-between text-xs">
-                        <span className="font-mono tabular-nums text-[#F5F2EB]/75">
+                        <span className="font-mono tabular-nums text-[#C2D0D6]">
                           {pt.quarter}
                         </span>
-                        <span className="font-mono tabular-nums text-[#E5CE93]">
+                        <span className="font-mono tabular-nums text-[#DFC585]">
                           Baseline {pt.baseline}% · Structured {pt.optimized}%
                         </span>
                       </div>
-                      <div className="relative h-2.5 w-full overflow-hidden rounded-full bg-[#071B20]">
+                      <div className="relative h-2.5 w-full overflow-hidden rounded-full bg-[#06141E]">
                         <div
-                          className="absolute inset-y-0 left-0 rounded-full bg-[#144B54]"
+                          className="absolute inset-y-0 left-0 rounded-full bg-[#154454]"
                           style={{ width: `${pt.baseline}%` }}
                         />
                         <div
-                          className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-[#8C5A3C] to-[#C8A253] transition-all duration-300"
+                          className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-[#6E5629] to-[#C8A253] transition-all duration-300"
                           style={{ width: `${pt.optimized}%`, opacity: 0.9 }}
                         />
                       </div>
@@ -426,20 +422,26 @@ export const ServicesAndSolutions: React.FC<ServicesAndSolutionsProps> = ({
                 </div>
               </div>
 
-              {/* Quick AI Scope Builder */}
-              <div className="mt-7 border-t border-[#E5CE93]/15 pt-5">
+              {/* Quick AI Scope Builder & Inline Advisor Trigger */}
+              <div className="mt-7 border-t border-[#C8A253]/15 pt-5 space-y-4">
                 <form onSubmit={handleGenerateScope} className="space-y-3">
-                  <div className="flex items-center justify-between gap-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
                     <label
                       htmlFor="ai-scope-input"
-                      className="flex items-center gap-2 text-xs font-semibold text-[#E5CE93]"
+                      className="flex items-center gap-2 text-xs font-semibold text-[#DFC585]"
                     >
                       <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
-                      <span>Gemini Consultation Scope Generator</span>
+                      <span>Consultation Scope Generator</span>
                     </label>
-                    <span className="text-[11px] text-[#F5F2EB]/55">
-                      Server-side Gemini reasoning
-                    </span>
+                    <button
+                      type="button"
+                      onClick={onOpenAdvisor}
+                      aria-label="Open Gemini Service Advisor"
+                      className="inline-flex items-center gap-1.5 rounded-md border border-[#C8A253]/30 bg-[#06141E] px-2.5 py-1 text-[11px] font-medium text-[#DFC585] transition-colors hover:border-[#C8A253] hover:text-[#F5F2EB] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C8A253]"
+                    >
+                      <MessageSquare className="h-3 w-3" aria-hidden="true" />
+                      <span>Open AI Advisor Chat</span>
+                    </button>
                   </div>
                   <div className="flex flex-col gap-2 sm:flex-row">
                     <input
@@ -448,12 +450,12 @@ export const ServicesAndSolutions: React.FC<ServicesAndSolutionsProps> = ({
                       value={goalInput}
                       onChange={(e) => setGoalInput(e.target.value)}
                       placeholder="e.g. We have 4 support agents and messy weekly Excel SLA reports..."
-                      className="min-h-[42px] flex-1 rounded-lg border border-[#E5CE93]/20 bg-[#071B20] px-3.5 py-2 text-sm text-[#F5F2EB] placeholder:text-[#F5F2EB]/40 focus:border-[#C8A253] focus:outline-none"
+                      className="min-h-[42px] flex-1 rounded-lg border border-[#C8A253]/25 bg-[#06141E] px-3.5 py-2 text-sm text-[#F5F2EB] placeholder:text-[#F5F2EB]/45 focus:border-[#C8A253] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#C8A253]"
                     />
                     <button
                       type="submit"
                       disabled={scopeLoading}
-                      className="inline-flex min-h-[42px] items-center justify-center rounded-lg bg-[#144B54] px-4 py-2 text-xs font-semibold text-[#F5F2EB] whitespace-nowrap transition-colors hover:bg-[#195E69] disabled:opacity-60"
+                      className="inline-flex min-h-[42px] items-center justify-center rounded-lg border border-[#C8A253]/40 bg-[#123846] px-4 py-2 text-xs font-semibold text-[#F5F2EB] whitespace-nowrap transition-colors hover:border-[#C8A253] hover:text-[#DFC585] disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C8A253]"
                     >
                       {scopeLoading ? 'Scoping...' : 'Generate Scope'}
                     </button>
@@ -461,30 +463,30 @@ export const ServicesAndSolutions: React.FC<ServicesAndSolutionsProps> = ({
                 </form>
 
                 {scopeError && (
-                  <p role="alert" className="mt-2.5 text-xs text-amber-300">
+                  <p role="alert" className="text-xs text-amber-300">
                     {scopeError}
                   </p>
                 )}
 
                 {scopeResult && (
-                  <div className="mt-4 rounded-xl border border-[#C8A253]/30 bg-[#071B20]/90 p-4 text-xs">
+                  <div className="rounded-xl border border-[#C8A253]/30 bg-[#06141E]/95 p-4 text-xs">
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="font-semibold text-[#E5CE93]">
+                      <span className="font-semibold text-[#DFC585]">
                         Recommended: {scopeResult.recommendedService.replace('-', ' ')} ·{' '}
                         {scopeResult.recommendedTimeline}
                       </span>
                       <button
                         type="button"
                         onClick={() => onApplyAiScope(scopeResult)}
-                        className="font-semibold text-[#C8A253] underline underline-offset-4 hover:text-[#F5F2EB]"
+                        className="font-semibold text-[#C8A253] underline underline-offset-4 hover:text-[#F5F2EB] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C8A253]"
                       >
                         Apply to Consultation Form
                       </button>
                     </div>
-                    <p className="mt-2 leading-relaxed text-[#F5F2EB]/85">
+                    <p className="mt-2 leading-relaxed text-[#F5F2EB]">
                       {scopeResult.executiveSummary}
                     </p>
-                    <ul className="mt-2 space-y-1 text-[#F5F2EB]/70">
+                    <ul className="mt-2 space-y-1 text-[#C2D0D6]">
                       {scopeResult.actionPlan.map((step) => (
                         <li key={step}>· {step}</li>
                       ))}

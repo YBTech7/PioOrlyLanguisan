@@ -8,11 +8,11 @@ const basePath = process.env.VITE_BASE_PATH || '/';
 const normalizedBase = basePath.endsWith('/') ? basePath : `${basePath}/`;
 
 const EXPECTED_PORTRAIT_SHA256 =
-  'f8a535be5f0a47556eda1f7a46bf545333cfd35f6d3d92b9668c16808c9ccd8e';
+  '395c1f53a5bd9f09249279a7aa5d33fad27c0cd9c014f9ebce54925a258fdbc5';
 
 const REQUIRED_PUBLIC_ASSETS = [
   'favicon.svg',
-  'assets/images/profile-original.png',
+  'assets/images/portrait-pio-languisan.png',
   'assets/images/ai_automation_workflow_1794901228479.jpg',
   'assets/images/analytics_dashboard_visual_1794901227040.jpg',
   'assets/images/blockchain_network_visual_1794901227232.jpg',
@@ -61,7 +61,7 @@ for (const rel of REQUIRED_PUBLIC_ASSETS) {
   }
 }
 
-const portraitPath = path.join(distDir, 'assets/images/profile-original.png');
+const portraitPath = path.join(distDir, 'assets/images/portrait-pio-languisan.png');
 const portraitHash = crypto
   .createHash('sha256')
   .update(fs.readFileSync(portraitPath))
