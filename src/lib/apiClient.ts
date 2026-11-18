@@ -32,7 +32,7 @@ export async function apiFetch<T>(
 ): Promise<T> {
   if (isStaticHostWithoutApi()) {
     throw new ApiError(
-      'This static GitHub Pages site does not have a live backend URL configured. Direct inquiries can be sent to pio.executive@gmail.com.',
+      'This static GitHub Pages site does not have a live backend URL configured. Direct inquiries can be sent to pioorly.languisan@gmail.com.',
       503,
       true
     );

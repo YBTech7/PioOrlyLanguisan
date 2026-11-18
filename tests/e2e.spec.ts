@@ -548,5 +548,46 @@ test.describe('Pio Languisan Portfolio Platform E2E', () => {
 
     await page.keyboard.press('Escape');
     await expect(page.locator('#consult-phone-country-listbox')).toHaveCount(0);
+
+    // Direct Inquiries contact links and operating hours on mobile
+    const contactSection = page.locator('#contact');
+    const emailLink = contactSection.getByRole('link', { name: 'pioorly.languisan@gmail.com' });
+    const businessPhoneLink = contactSection.getByRole('link', { name: '+63 929 439 1755' });
+    await expect(emailLink).toHaveAttribute('href', 'mailto:pioorly.languisan@gmail.com');
+    await expect(businessPhoneLink).toHaveAttribute('href', 'tel:+639294391755');
+    await expect(contactSection).toContainText('8:00 AM–5:00 PM PST');
+    await expect(contactSection).not.toContainText('pio.executive@gmail.com');
+
+    await emailLink.focus();
+    await expect(emailLink).toBeFocused();
+    await businessPhoneLink.focus();
+    await expect(businessPhoneLink).toBeFocused();
+  });
+
+  test('renders Direct Inquiries links, hours, and keyboard focus cleanly on desktop', async ({
+    page,
+  }) => {
+    await page.route('**/api/content', (route) =>
+      route.fulfill({ status: 404, contentType: 'text/plain', body: 'Not found' })
+    );
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto('./', { waitUntil: 'networkidle' });
+
+    const contactSection = page.locator('#contact');
+    await contactSection.scrollIntoViewIfNeeded();
+    const emailLink = contactSection.getByRole('link', { name: 'pioorly.languisan@gmail.com' });
+    const businessPhoneLink = contactSection.getByRole('link', { name: '+63 929 439 1755' });
+
+    await expect(emailLink).toBeVisible();
+    await expect(emailLink).toHaveAttribute('href', 'mailto:pioorly.languisan@gmail.com');
+    await expect(businessPhoneLink).toBeVisible();
+    await expect(businessPhoneLink).toHaveAttribute('href', 'tel:+639294391755');
+    await expect(contactSection).toContainText('8:00 AM–5:00 PM PST');
+    await expect(contactSection).not.toContainText('pio.executive@gmail.com');
+
+    await emailLink.focus();
+    await expect(emailLink).toBeFocused();
+    await businessPhoneLink.focus();
+    await expect(businessPhoneLink).toBeFocused();
   });
 });

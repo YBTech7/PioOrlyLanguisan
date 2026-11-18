@@ -160,7 +160,24 @@ export const ConsultationSection: React.FC<ConsultationSectionProps> = ({
             <div className="space-y-4 border-t border-[#C8A253]/15 pt-6 text-sm text-[#C2D0D6]">
               <div>
                 <p className="text-xs font-medium text-[#DFC585]">Direct Inquiries</p>
-                <p className="mt-1 font-mono text-sm text-[#F5F2EB]">pio.executive@gmail.com</p>
+                <div className="mt-1.5 flex flex-col items-start gap-1.5">
+                  <a
+                    href="mailto:pioorly.languisan@gmail.com"
+                    className="inline-flex items-center rounded-sm py-0.5 font-mono text-sm text-[#F5F2EB] break-all underline decoration-[#C8A253]/45 underline-offset-4 transition-colors hover:text-[#DFC585] hover:decoration-[#DFC585] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C8A253]"
+                  >
+                    pioorly.languisan@gmail.com
+                  </a>
+                  <a
+                    href="tel:+639294391755"
+                    className="inline-flex items-center rounded-sm py-0.5 font-mono text-sm text-[#F5F2EB] underline decoration-[#C8A253]/45 underline-offset-4 transition-colors hover:text-[#DFC585] hover:decoration-[#DFC585] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C8A253]"
+                  >
+                    +63 929 439 1755
+                  </a>
+                </div>
+                <p className="mt-2 text-xs text-[#C2D0D6]">
+                  Hours of operation:{' '}
+                  <span className="font-medium text-[#F5F2EB]">8:00 AM–5:00 PM PST</span>
+                </p>
               </div>
               <div>
                 <p className="text-xs font-medium text-[#DFC585]">Response Commitment</p>
