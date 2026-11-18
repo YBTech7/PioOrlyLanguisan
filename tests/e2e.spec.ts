@@ -263,8 +263,21 @@ test.describe('Pio Languisan Portfolio Platform E2E', () => {
       route.fulfill({ status: 404, contentType: 'text/plain', body: 'Not found' })
     );
 
+    const seenSubmissionKeys: string[] = [];
+    let inquiryCalls = 0;
     await page.route('**/api/inquiries', async (route) => {
       const payload = route.request().postDataJSON();
+      seenSubmissionKeys.push(payload.submissionKey);
+      inquiryCalls += 1;
+      if (inquiryCalls === 1) {
+        // Simulate incomplete API response without a valid tracking ID
+        await route.fulfill({
+          status: 201,
+          contentType: 'application/json',
+          body: JSON.stringify({ inquiry: { id: '' } }),
+        });
+        return;
+      }
       await route.fulfill({
         status: 201,
         contentType: 'application/json',
@@ -274,6 +287,91 @@ test.describe('Pio Languisan Portfolio Platform E2E', () => {
             ...payload,
             status: 'New',
             createdAt: '2026-11-17T12:00:00.000Z',
+          },
+        }),
+      });
+    });
+
+    await page.route('**/api/admin/login', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ token: 'e2e-admin-token', expiresInMs: 3600000 }),
+      });
+    });
+
+    await page.route('**/api/admin/dashboard', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          inquiries: [
+            {
+              id: 'INQ-2026-SENT01',
+              name: 'Jordan Taylor',
+              email: 'jordan@acme-ops.example',
+              company: 'Acme Ops',
+              tier: 'smb',
+              serviceDomain: 'data-analytics',
+              timeline: 'Within 30 days',
+              message: 'Need cleaner SLA reporting.',
+              status: 'New',
+              createdAt: '2026-11-18T10:00:00.000Z',
+              emailStatus: 'sent',
+              emailAttempts: 1,
+              providerMessageId: '193a8f10ab',
+              lastEmailHttpStatus: 200,
+              lastEmailStage: 'gmail_accepted',
+            },
+            {
+              id: 'INQ-2026-QUEUED02',
+              name: 'Riley Chen',
+              email: 'riley@startup.example',
+              company: '',
+              tier: 'startup',
+              serviceDomain: 'technical-support',
+              timeline: 'Immediate (1–2 weeks)',
+              message: 'Support queue triage setup.',
+              status: 'New',
+              createdAt: '2026-11-18T09:00:00.000Z',
+              emailStatus: 'pending',
+              emailAttempts: 0,
+            },
+          ],
+          projects: [],
+          brand: {
+            customPortraitDataUrl: null,
+            customLogoDataUrl: null,
+            motionEnabled: true,
+            motionSensitivity: 1,
+          },
+        }),
+      });
+    });
+
+    await page.route('**/api/admin/inquiries/*', async (route) => {
+      const body = route.request().postDataJSON();
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          inquiry: {
+            id: 'INQ-2026-SENT01',
+            name: 'Jordan Taylor',
+            email: 'jordan@acme-ops.example',
+            company: 'Acme Ops',
+            tier: 'smb',
+            serviceDomain: 'data-analytics',
+            timeline: 'Within 30 days',
+            message: 'Need cleaner SLA reporting.',
+            status: body.status || 'In Review',
+            notes: body.notes ?? '',
+            createdAt: '2026-11-18T10:00:00.000Z',
+            emailStatus: 'sent',
+            emailAttempts: 1,
+            providerMessageId: '193a8f10ab',
+            lastEmailHttpStatus: 200,
+            lastEmailStage: 'gmail_accepted',
           },
         }),
       });
@@ -317,10 +415,19 @@ test.describe('Pio Languisan Portfolio Platform E2E', () => {
     await page.getByRole('button', { name: 'Submit Consultation Request' }).click();
     await expect(page.getByRole('alert')).toContainText('valid work or personal email');
 
-    // Valid submission succeeds
+    // First submit gets incomplete response: entries preserved & retry error shown
     await page.locator('#consult-email').fill('jordan@acme-ops.example');
     await page.getByRole('button', { name: 'Submit Consultation Request' }).click();
+    await expect(page.getByRole('alert')).toContainText('could not confirm your tracking ID');
+    await expect(page.locator('#consult-name')).toHaveValue('Jordan Taylor');
+    await expect(page.locator('#consult-email')).toHaveValue('jordan@acme-ops.example');
+
+    // Retry sends identical submissionKey and displays tracking ID cleanly
+    await page.getByRole('button', { name: 'Submit Consultation Request' }).click();
     await expect(page.getByText('INQ-2026-TEST1234')).toBeVisible();
+    expect(seenSubmissionKeys.length).toBe(2);
+    expect(seenSubmissionKeys[0]).toBeTruthy();
+    expect(seenSubmissionKeys[0]).toBe(seenSubmissionKeys[1]);
 
     // AI Advisor Drawer shows clean unavailable message when backend returns 503
     await page.getByRole('button', { name: 'Open Gemini Service Advisor' }).click();
@@ -332,12 +439,23 @@ test.describe('Pio Languisan Portfolio Platform E2E', () => {
     await page.keyboard.press('Escape');
     await expect(drawer).toHaveCount(0);
 
-    // Admin Portal does NOT disclose hardcoded passcode
+    // Admin Portal does NOT disclose hardcoded passcode, shows email labels, and updates inquiry status & notes
     await page.getByRole('button', { name: 'Admin Console' }).click();
     const adminDialog = page.getByRole('dialog');
     await expect(adminDialog).toBeVisible();
     const dialogText = await adminDialog.innerText();
     expect(dialogText).not.toContain('PL-EXEC-2026');
+
+    await adminDialog.getByLabel('Executive passcode').fill('test-passcode');
+    await adminDialog.getByRole('button', { name: 'Unlock Console' }).click();
+    await expect(adminDialog.getByText('Accepted by Gmail', { exact: true })).toBeVisible();
+    await expect(adminDialog.getByText('Gmail ID: 193a8f10ab')).toBeVisible();
+    await expect(adminDialog.getByText('Queued', { exact: true })).toBeVisible();
+    await adminDialog.getByLabel('Status for Jordan Taylor').selectOption('In Review');
+    await expect(adminDialog.getByText('Updated INQ-2026-SENT01 to In Review.')).toBeVisible();
+    await adminDialog.getByLabel('Notes for INQ-2026-SENT01').fill('Confirmed in inbox.');
+    await adminDialog.getByRole('button', { name: 'Save Note' }).first().click();
+    await expect(adminDialog.getByText('Saved triage note for INQ-2026-SENT01.')).toBeVisible();
     await page.keyboard.press('Escape');
   });
 

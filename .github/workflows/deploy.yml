@@ -59,6 +59,7 @@ jobs:
 
       - name: Verify production files
         run: |
+          npm run verify:gh-pages
           test -f dist/index.html
           test -d dist/assets
           if grep -q 'src="/src/main.tsx"' dist/index.html; then

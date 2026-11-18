@@ -91,6 +91,8 @@ describe('API & Security Hardening', () => {
     expect(body.ok).toBe(true);
     expect(body.geminiConfigured).toBe(false);
     expect(body.adminConfigured).toBe(true);
+    expect(body.consultationStorage).toBe('file');
+    expect(body.consultationMailerConfigured).toBe(false);
   });
 
   it('applies strict CORS origin allowlist', async () => {
@@ -161,6 +163,21 @@ describe('API & Security Hardening', () => {
       }),
     });
     expect(honeypot.status).toBe(201);
+
+    // Reject malformed submissionKey
+    const badKey = await fetch(`${baseUrl}/api/inquiries`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Alex Rivera',
+        email: 'alex@example.com',
+        tier: 'startup',
+        serviceDomain: 'data-analytics',
+        message: 'Testing invalid submission key handling cleanly.',
+        submissionKey: 'not-a-uuid',
+      }),
+    });
+    expect(badKey.status).toBe(400);
 
     // Valid submissions yield collision-resistant IDs
     const ids = new Set<string>();
@@ -278,6 +295,28 @@ describe('API & Security Hardening', () => {
     const brandJson = await pngUpload.json();
     expect(brandJson.brand.customPortraitDataUrl).toBeNull();
     expect(brandJson.brand.customLogoDataUrl).toContain('data:image/png;base64,');
+
+    // Admin can inspect dashboard and update saved inquiry status & notes
+    const dashRes = await fetch(`${baseUrl}/api/admin/dashboard`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(dashRes.status).toBe(200);
+    const dashJson = await dashRes.json();
+    const firstInquiry = dashJson.inquiries[0];
+    expect(firstInquiry?.id).toBeTruthy();
+
+    const patchRes = await fetch(`${baseUrl}/api/admin/inquiries/${firstInquiry.id}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ status: 'Scheduled', notes: 'Verified inbox delivery.' }),
+    });
+    expect(patchRes.status).toBe(200);
+    const patchJson = await patchRes.json();
+    expect(patchJson.inquiry.status).toBe('Scheduled');
+    expect(patchJson.inquiry.notes).toBe('Verified inbox delivery.');
 
     // Logout revokes token
     const logoutRes = await fetch(`${baseUrl}/api/admin/logout`, {

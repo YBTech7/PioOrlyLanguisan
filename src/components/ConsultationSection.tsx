@@ -26,6 +26,7 @@ export const ConsultationSection: React.FC<ConsultationSectionProps> = ({
   const [message, setMessage] = useState(preselectedSummary || '');
   const [website, setWebsite] = useState('');
   const submission = useRef<{ payload: string; key: string } | null>(null);
+  const submittingRef = useRef(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submittedRecord, setSubmittedRecord] = useState<InquiryRecord | null>(null);
@@ -48,6 +49,7 @@ export const ConsultationSection: React.FC<ConsultationSectionProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submittingRef.current) return;
     setError(null);
 
     if (name.trim().length < 2) {
@@ -63,23 +65,28 @@ export const ConsultationSection: React.FC<ConsultationSectionProps> = ({
       return;
     }
 
+    submittingRef.current = true;
     setSubmitting(true);
     try {
       const fields = {
-          name: name.trim(),
-          email: email.trim(),
-          company: company.trim(),
-          tier,
-          serviceDomain,
-          timeline,
-          message: message.trim(),
-          website,
-        };
+        name: name.trim(),
+        email: email.trim(),
+        company: company.trim(),
+        tier,
+        serviceDomain,
+        timeline,
+        message: message.trim(),
+        website,
+      };
       const payload = JSON.stringify(fields);
       if (submission.current?.payload !== payload) {
-        submission.current = { payload, key: crypto.randomUUID() };
+        const nextKey =
+          typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+            ? crypto.randomUUID()
+            : '00000000-0000-4000-8000-' + Date.now().toString(16).padStart(12, '0').slice(-12);
+        submission.current = { payload, key: nextKey };
       }
-      const data = await apiFetch<{ inquiry: InquiryRecord }>('/api/inquiries', {
+      const data = await apiFetch<{ inquiry?: InquiryRecord }>('/api/inquiries', {
         method: 'POST',
         body: JSON.stringify({ ...fields, submissionKey: submission.current.key }),
       });
@@ -96,6 +103,7 @@ export const ConsultationSection: React.FC<ConsultationSectionProps> = ({
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Submission failed. Please try again.');
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   };
@@ -157,7 +165,10 @@ export const ConsultationSection: React.FC<ConsultationSectionProps> = ({
                   </div>
                   <button
                     type="button"
-                    onClick={() => setSubmittedRecord(null)}
+                    onClick={() => {
+                      setSubmittedRecord(null);
+                      setError(null);
+                    }}
                     className="rounded-lg border border-[#C8A253]/30 px-4 py-2 text-xs font-semibold text-[#DFC585] hover:bg-[#123846] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C8A253]"
                   >
                     Submit Another Request

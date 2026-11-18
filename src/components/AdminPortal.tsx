@@ -32,8 +32,8 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   const [authLoading, setAuthLoading] = useState(false);
 
   const [activeTab, setActiveTab] = useState<'leads' | 'projects' | 'brand'>('leads');
-  type AdminInquiry = InquiryRecord & { emailStatus?: 'pending' | 'sending' | 'sent' | 'review' };
-  const [inquiries, setInquiries] = useState<AdminInquiry[]>([]);
+  const [inquiries, setInquiries] = useState<InquiryRecord[]>([]);
+  const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({});
   const [projects, setProjects] = useState<ProjectCase[]>([]);
   const [brand, setBrand] = useState<BrandSettings>({
     customPortraitDataUrl: null,
@@ -62,13 +62,17 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   const loadDashboard = async (authToken: string) => {
     try {
       const data = await apiFetch<{
-        inquiries: AdminInquiry[];
+        inquiries: InquiryRecord[];
         projects: ProjectCase[];
         brand: BrandSettings;
       }>('/api/admin/dashboard', {
         headers: { Authorization: `Bearer ${authToken}` },
       });
-      setInquiries(data.inquiries || []);
+      const loadedInquiries = data.inquiries || [];
+      setInquiries(loadedInquiries);
+      setNoteDrafts(
+        Object.fromEntries(loadedInquiries.map((item) => [item.id, item.notes ?? '']))
+      );
       setProjects(data.projects || []);
       if (data.brand) setBrand(data.brand);
     } catch (err) {
@@ -109,18 +113,28 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
     setStatusMessage(null);
   };
 
-  const handleInquiryStatusChange = async (id: string, status: InquiryStatus) => {
+  const handleInquiryUpdate = async (
+    id: string,
+    updates: { status?: InquiryStatus; notes?: string }
+  ) => {
     if (!token) return;
     try {
-      await apiFetch(`/api/admin/inquiries/${id}`, {
+      const data = await apiFetch<{ inquiry: InquiryRecord }>(`/api/admin/inquiries/${id}`, {
         method: 'PATCH',
         headers: { Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ status }),
+        body: JSON.stringify(updates),
       });
       setInquiries((prev) =>
-        prev.map((item) => (item.id === id ? { ...item, status } : item))
+        prev.map((item) => (item.id === id ? { ...item, ...data.inquiry } : item))
       );
-      setStatusMessage(`Updated ${id} to ${status}.`);
+      if (updates.notes !== undefined) {
+        setNoteDrafts((prev) => ({ ...prev, [id]: data.inquiry.notes ?? updates.notes ?? '' }));
+      }
+      setStatusMessage(
+        updates.status
+          ? `Updated ${id} to ${updates.status}.`
+          : `Saved triage note for ${id}.`
+      );
     } catch (err) {
       setStatusMessage(err instanceof Error ? err.message : 'Unable to update inquiry.');
     }
@@ -329,47 +343,105 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                     No client inquiries logged yet.
                   </p>
                 ) : (
-                  inquiries.map((inq) => (
-                    <div
-                      key={inq.id}
-                      className="rounded-xl border border-[#E5CE93]/15 bg-[#0D2B32]/85 p-4 text-sm"
-                    >
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div>
-                          <p className="font-mono text-xs text-[#E5CE93]">
-                            {inq.id} · {inq.tier.toUpperCase()} · {inq.timeline}
-                          </p>
-                          <h3 className="mt-1 font-semibold text-[#F5F2EB]">
-                            {inq.name} — {inq.company}
-                          </h3>
-                          <p className="text-xs text-[#F5F2EB]/65">{inq.email}</p>
-                          {inq.emailStatus && (
-                            <p className="text-xs text-[#F5F2EB]/65">
-                              Email {inq.emailStatus === 'review' ? 'needs review' : inq.emailStatus}
-                            </p>
-                          )}
-                        </div>
+                  inquiries.map((inq) => {
+                    const emailLabel =
+                      inq.emailStatus === 'pending'
+                        ? 'Queued'
+                        : inq.emailStatus === 'sending'
+                          ? 'Sending'
+                          : inq.emailStatus === 'sent'
+                            ? 'Accepted by Gmail'
+                            : inq.emailStatus === 'review'
+                              ? 'Needs review'
+                              : null;
 
-                        <select
-                          aria-label={`Status for ${inq.name}`}
-                          value={inq.status}
-                          onChange={(e) =>
-                            handleInquiryStatusChange(inq.id, e.target.value as InquiryStatus)
-                          }
-                          className="rounded-lg border border-[#E5CE93]/25 bg-[#071B20] px-3 py-1.5 text-xs text-[#E5CE93]"
-                        >
-                          {STATUS_OPTIONS.map((opt) => (
-                            <option key={opt} value={opt}>
-                              {opt}
-                            </option>
-                          ))}
-                        </select>
+                    const diagParts: string[] = [];
+                    if (typeof inq.emailAttempts === 'number' && inq.emailAttempts > 0) {
+                      diagParts.push(`Attempts: ${inq.emailAttempts}`);
+                    }
+                    if (inq.lastEmailHttpStatus) {
+                      diagParts.push(`HTTP ${inq.lastEmailHttpStatus}`);
+                    }
+                    if (inq.providerMessageId) {
+                      diagParts.push(`Gmail ID: ${inq.providerMessageId}`);
+                    }
+                    if (inq.lastEmailStage) {
+                      diagParts.push(inq.lastEmailStage);
+                    }
+
+                    return (
+                      <div
+                        key={inq.id}
+                        className="rounded-xl border border-[#E5CE93]/15 bg-[#0D2B32]/85 p-4 text-sm"
+                      >
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div>
+                            <p className="font-mono text-xs text-[#E5CE93]">
+                              {inq.id} · {inq.tier.toUpperCase()} · {inq.timeline}
+                            </p>
+                            <h3 className="mt-1 font-semibold text-[#F5F2EB]">
+                              {inq.name}
+                              {inq.company ? ` — ${inq.company}` : ''}
+                            </h3>
+                            <p className="text-xs text-[#F5F2EB]/65">{inq.email}</p>
+                            {emailLabel && (
+                              <p className="mt-1.5 text-xs text-[#DFC585]">
+                                Email: <span className="font-semibold">{emailLabel}</span>
+                                {diagParts.length > 0 && (
+                                  <span className="ml-2 font-mono text-[11px] text-[#F5F2EB]/65">
+                                    ({diagParts.join(' · ')})
+                                  </span>
+                                )}
+                              </p>
+                            )}
+                          </div>
+
+                          <select
+                            aria-label={`Status for ${inq.name}`}
+                            value={inq.status}
+                            onChange={(e) =>
+                              handleInquiryUpdate(inq.id, {
+                                status: e.target.value as InquiryStatus,
+                              })
+                            }
+                            className="rounded-lg border border-[#E5CE93]/25 bg-[#071B20] px-3 py-1.5 text-xs text-[#E5CE93]"
+                          >
+                            {STATUS_OPTIONS.map((opt) => (
+                              <option key={opt} value={opt}>
+                                {opt}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <p className="mt-3 text-xs leading-relaxed text-[#F5F2EB]/80">
+                          {inq.message}
+                        </p>
+                        <div className="mt-3 flex flex-col gap-2 border-t border-[#E5CE93]/10 pt-3 sm:flex-row sm:items-center">
+                          <input
+                            type="text"
+                            aria-label={`Notes for ${inq.id}`}
+                            value={noteDrafts[inq.id] ?? inq.notes ?? ''}
+                            onChange={(e) =>
+                              setNoteDrafts((prev) => ({ ...prev, [inq.id]: e.target.value }))
+                            }
+                            placeholder="Add verification or triage note..."
+                            className="flex-1 rounded-lg border border-[#E5CE93]/20 bg-[#071B20] px-3 py-1.5 text-xs text-[#F5F2EB] placeholder:text-[#F5F2EB]/40 focus:border-[#C8A253] focus:outline-none"
+                          />
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleInquiryUpdate(inq.id, {
+                                notes: noteDrafts[inq.id] ?? inq.notes ?? '',
+                              })
+                            }
+                            className="rounded-lg border border-[#C8A253]/35 bg-[#123846] px-3 py-1.5 text-xs font-medium text-[#F5F2EB] hover:bg-[#194B5C]"
+                          >
+                            Save Note
+                          </button>
+                        </div>
                       </div>
-                      <p className="mt-3 text-xs leading-relaxed text-[#F5F2EB]/80">
-                        {inq.message}
-                      </p>
-                    </div>
-                  ))
+                    );
+                  })
                 )}
               </div>
             )}

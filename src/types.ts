@@ -62,6 +62,8 @@ export interface FaqItem {
   topic: string;
 }
 
+export type EmailDeliveryState = 'pending' | 'sending' | 'sent' | 'review';
+
 export interface InquiryRecord {
   id: string;
   name: string;
@@ -74,6 +76,11 @@ export interface InquiryRecord {
   status: InquiryStatus;
   createdAt: string;
   notes?: string;
+  emailStatus?: EmailDeliveryState;
+  emailAttempts?: number;
+  providerMessageId?: string | null;
+  lastEmailHttpStatus?: number | null;
+  lastEmailStage?: string | null;
 }
 
 export interface BrandSettings {

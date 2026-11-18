@@ -1,5 +1,9 @@
 import 'dotenv/config';
-import { consultationInbox, runConsultationMailer } from './consultation.ts';
+import {
+  consultationInbox,
+  getConsultationMailerConfig,
+  runConsultationMailer,
+} from './consultation.ts';
 import express from 'express';
 import type { Request, Response, NextFunction, Express } from 'express';
 import fs from 'fs';
@@ -421,11 +425,15 @@ export function createApiApp(): Express {
   });
 
   app.get('/api/health', (_req, res) => {
+    const mailerConfig = getConsultationMailerConfig();
     res.json({
       ok: true,
       timestamp: new Date().toISOString(),
       geminiConfigured: Boolean(process.env.GEMINI_API_KEY),
       adminConfigured: Boolean(process.env.ADMIN_PASSCODE),
+      consultationStorage: consultationInbox ? 'postgres' : 'file',
+      consultationMailerConfigured: Boolean(mailerConfig),
+      consultationSameSenderRecipient: mailerConfig ? mailerConfig.sameSenderRecipient : null,
     });
   });
 
@@ -522,15 +530,33 @@ export function createApiApp(): Express {
     try {
       if (consultationInbox) {
         const inquiry = await consultationInbox.save(record, key ?? crypto.randomUUID());
+        console.info('Consultation inquiry recorded', {
+          inquiryId: inquiry.id,
+          httpStatus: 201,
+          stage: 'database_save',
+          storage: 'postgres',
+          deduplicated: inquiry.id !== record.id,
+        });
         res.status(201).json({ inquiry });
         return;
       }
       const store = structuredClone(ensureStore());
       store.inquiries.unshift(record);
       saveStore(store);
+      console.info('Consultation inquiry recorded', {
+        inquiryId: record.id,
+        httpStatus: 201,
+        stage: 'file_save',
+        storage: 'file',
+        deduplicated: false,
+      });
       res.status(201).json({ inquiry: record });
     } catch {
-      console.error('Consultation storage failed.');
+      console.error('Consultation storage failed', {
+        inquiryId: record.id,
+        httpStatus: 503,
+        stage: 'database_save',
+      });
       res.status(503).json({ error: 'We could not save your request. Please try again.' });
     }
   });
@@ -743,6 +769,12 @@ export function createApiApp(): Express {
     try {
       const saved = consultationInbox && await consultationInbox.update(req.params.id, changes);
       if (saved) {
+        console.info('Consultation inquiry updated', {
+          inquiryId: saved.id,
+          httpStatus: 200,
+          stage: 'admin_update',
+          status: saved.status,
+        });
         res.json({ inquiry: saved });
         return;
       }
@@ -754,8 +786,19 @@ export function createApiApp(): Express {
       }
       Object.assign(target, changes);
       saveStore(store);
+      console.info('Consultation inquiry updated', {
+        inquiryId: target.id,
+        httpStatus: 200,
+        stage: 'admin_update',
+        status: target.status,
+      });
       res.json({ inquiry: target });
     } catch {
+      console.error('Consultation inquiry update failed', {
+        inquiryId: req.params.id,
+        httpStatus: 503,
+        stage: 'admin_update',
+      });
       res.status(503).json({ error: 'The inquiry could not be updated. Please try again.' });
     }
   });
