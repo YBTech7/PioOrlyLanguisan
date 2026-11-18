@@ -263,10 +263,12 @@ test.describe('Pio Languisan Portfolio Platform E2E', () => {
       route.fulfill({ status: 404, contentType: 'text/plain', body: 'Not found' })
     );
 
+    const seenPayloads: Array<Record<string, unknown>> = [];
     const seenSubmissionKeys: string[] = [];
     let inquiryCalls = 0;
     await page.route('**/api/inquiries', async (route) => {
       const payload = route.request().postDataJSON();
+      seenPayloads.push(payload);
       seenSubmissionKeys.push(payload.submissionKey);
       inquiryCalls += 1;
       if (inquiryCalls === 1) {
@@ -310,6 +312,7 @@ test.describe('Pio Languisan Portfolio Platform E2E', () => {
               id: 'INQ-2026-SENT01',
               name: 'Jordan Taylor',
               email: 'jordan@acme-ops.example',
+              phone: '+639171234567',
               company: 'Acme Ops',
               tier: 'smb',
               serviceDomain: 'data-analytics',
@@ -359,6 +362,7 @@ test.describe('Pio Languisan Portfolio Platform E2E', () => {
             id: 'INQ-2026-SENT01',
             name: 'Jordan Taylor',
             email: 'jordan@acme-ops.example',
+            phone: '+639171234567',
             company: 'Acme Ops',
             tier: 'smb',
             serviceDomain: 'data-analytics',
@@ -415,19 +419,58 @@ test.describe('Pio Languisan Portfolio Platform E2E', () => {
     await page.getByRole('button', { name: 'Submit Consultation Request' }).click();
     await expect(page.getByRole('alert')).toContainText('valid work or personal email');
 
-    // First submit gets incomplete response: entries preserved & retry error shown
+    // Keyboard searchable country picker supports shared +1 territories and pasted + numbers
     await page.locator('#consult-email').fill('jordan@acme-ops.example');
+    const countryBtn = page.locator('#consult-phone-country');
+    await expect(countryBtn).toContainText('Philippines (+63)');
+    await countryBtn.focus();
+    await page.keyboard.press('ArrowDown');
+    const countrySearch = page.locator('#consult-phone-country-search');
+    await expect(countrySearch).toBeFocused();
+    await countrySearch.fill('+1');
+    await expect(page.getByRole('option', { name: /United States \(\+1\)/ })).toBeVisible();
+    await expect(page.getByRole('option', { name: /Canada \(\+1\)/ })).toBeVisible();
+    await countrySearch.fill('Canada');
+    await page.keyboard.press('Enter');
+    await expect(countryBtn).toContainText('Canada (+1)');
+    await expect(page.locator('#consult-phone')).toBeFocused();
+
+    // Invalid phone number triggers field-level validation error while preserving selection
+    await page.locator('#consult-phone').fill('12345');
+    await page.getByRole('button', { name: 'Submit Consultation Request' }).click();
+    await expect(page.locator('#consult-phone-error')).toContainText('Canada (+1)');
+    await expect(countryBtn).toContainText('Canada (+1)');
+    await expect(page.locator('#consult-phone')).toHaveValue('12345');
+
+    // Pasting a complete international +63 number updates country & submits normalized E.164 on retry
+    await page.locator('#consult-phone').fill('+63 917 123 4567');
+    await expect(countryBtn).toContainText('Philippines (+63)');
+
+    // First submit gets incomplete response: entries (including phone & country) preserved & retry error shown
     await page.getByRole('button', { name: 'Submit Consultation Request' }).click();
     await expect(page.getByRole('alert')).toContainText('could not confirm your tracking ID');
     await expect(page.locator('#consult-name')).toHaveValue('Jordan Taylor');
     await expect(page.locator('#consult-email')).toHaveValue('jordan@acme-ops.example');
+    await expect(page.locator('#consult-phone')).toHaveValue('+63 917 123 4567');
+    await expect(countryBtn).toContainText('Philippines (+63)');
 
-    // Retry sends identical submissionKey and displays tracking ID cleanly
+    // Retry sends identical submissionKey and normalized E.164 phone, displaying tracking ID cleanly
     await page.getByRole('button', { name: 'Submit Consultation Request' }).click();
     await expect(page.getByText('INQ-2026-TEST1234')).toBeVisible();
     expect(seenSubmissionKeys.length).toBe(2);
     expect(seenSubmissionKeys[0]).toBeTruthy();
     expect(seenSubmissionKeys[0]).toBe(seenSubmissionKeys[1]);
+    expect(seenPayloads[0].phone).toBe('+639171234567');
+    expect(seenPayloads[1].phone).toBe('+639171234567');
+
+    // Submit another email-only inquiry without a contact number (optional field)
+    await page.getByRole('button', { name: 'Submit Another Request' }).click();
+    await page.locator('#consult-name').fill('Riley Chen');
+    await page.locator('#consult-email').fill('riley@startup.example');
+    await page.locator('#consult-message').fill('Email-only consultation inquiry without phone.');
+    await page.getByRole('button', { name: 'Submit Consultation Request' }).click();
+    await expect(page.getByText('INQ-2026-TEST1234')).toBeVisible();
+    expect(seenPayloads[2].phone).toBeUndefined();
 
     // AI Advisor Drawer shows clean unavailable message when backend returns 503
     await page.getByRole('button', { name: 'Open Gemini Service Advisor' }).click();
@@ -439,7 +482,7 @@ test.describe('Pio Languisan Portfolio Platform E2E', () => {
     await page.keyboard.press('Escape');
     await expect(drawer).toHaveCount(0);
 
-    // Admin Portal does NOT disclose hardcoded passcode, shows email labels, and updates inquiry status & notes
+    // Admin Portal does NOT disclose hardcoded passcode, shows tel: links and Not provided, and updates inquiry status & notes
     await page.getByRole('button', { name: 'Admin Console' }).click();
     const adminDialog = page.getByRole('dialog');
     await expect(adminDialog).toBeVisible();
@@ -448,6 +491,10 @@ test.describe('Pio Languisan Portfolio Platform E2E', () => {
 
     await adminDialog.getByLabel('Executive passcode').fill('test-passcode');
     await adminDialog.getByRole('button', { name: 'Unlock Console' }).click();
+    const telLink = adminDialog.getByRole('link', { name: '+639171234567' });
+    await expect(telLink).toBeVisible();
+    await expect(telLink).toHaveAttribute('href', 'tel:+639171234567');
+    await expect(adminDialog.getByText('Contact number: Not provided')).toBeVisible();
     await expect(adminDialog.getByText('Accepted by Gmail', { exact: true })).toBeVisible();
     await expect(adminDialog.getByText('Gmail ID: 193a8f10ab')).toBeVisible();
     await expect(adminDialog.getByText('Queued', { exact: true })).toBeVisible();
@@ -473,4 +520,33 @@ test.describe('Pio Languisan Portfolio Platform E2E', () => {
       expect(overflow, `Horizontal overflow detected at ${vp.name}: ${overflow}px`).toBeLessThanOrEqual(1);
     });
   }
+
+  test('keeps searchable country picker usable on mobile with tel keyboard hints and zero overflow', async ({
+    page,
+  }) => {
+    await page.route('**/api/content', (route) =>
+      route.fulfill({ status: 404, contentType: 'text/plain', body: 'Not found' })
+    );
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto('./', { waitUntil: 'networkidle' });
+
+    const phoneInput = page.locator('#consult-phone');
+    await phoneInput.scrollIntoViewIfNeeded();
+    await expect(phoneInput).toHaveAttribute('type', 'tel');
+    await expect(phoneInput).toHaveAttribute('inputmode', 'tel');
+    await expect(phoneInput).toHaveAttribute('autocomplete', 'tel');
+
+    await page.locator('#consult-phone-country').click();
+    await expect(page.locator('#consult-phone-country-listbox')).toBeVisible();
+    await page.locator('#consult-phone-country-search').fill('United');
+    await expect(page.getByRole('option', { name: 'United States (+1)' })).toBeVisible();
+
+    const overflow = await page.evaluate(() => {
+      return document.documentElement.scrollWidth - document.documentElement.clientWidth;
+    });
+    expect(overflow).toBeLessThanOrEqual(1);
+
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#consult-phone-country-listbox')).toHaveCount(0);
+  });
 });

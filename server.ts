@@ -18,6 +18,10 @@ import {
   CLIENT_TIER_SOLUTIONS,
   WORKFLOW_VISUAL_URL,
 } from './src/data/profileData.ts';
+import {
+  isValidCountryCode,
+  validateAndNormalizePhone,
+} from './src/lib/phone.ts';
 import type {
   AiScopeRecommendation,
   BrandSettings,
@@ -449,8 +453,18 @@ export function createApiApp(): Express {
 
   const inquiryLimiter = createRateLimiter('inquiries', 10, 15 * 60 * 1000);
   app.post('/api/inquiries', inquiryLimiter, async (req, res) => {
-    const { name, email, company, tier, serviceDomain, timeline, message, website } =
-      req.body ?? {};
+    const {
+      name,
+      email,
+      phone,
+      phoneCountry,
+      company,
+      tier,
+      serviceDomain,
+      timeline,
+      message,
+      website,
+    } = req.body ?? {};
 
     // Honeypot spam trap
     if (typeof website === 'string' && website.trim().length > 0) {
@@ -486,6 +500,17 @@ export function createApiApp(): Express {
       res.status(400).json({ error: 'Please provide a valid email address.' });
       return;
     }
+    const rawCountry =
+      typeof phoneCountry === 'string' && isValidCountryCode(phoneCountry)
+        ? (phoneCountry.toUpperCase() as Parameters<typeof validateAndNormalizePhone>[1])
+        : undefined;
+    const phoneCheck = validateAndNormalizePhone(phone, rawCountry);
+    if (!phoneCheck.valid) {
+      res.status(400).json({
+        error: phoneCheck.error || 'Please enter a valid international contact number.',
+      });
+      return;
+    }
     if (trimmedCompany.length > 120) {
       res.status(400).json({ error: 'Organization name must be 120 characters or fewer.' });
       return;
@@ -513,6 +538,7 @@ export function createApiApp(): Express {
       id: `INQ-${new Date().getFullYear()}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`,
       name: trimmedName,
       email: trimmedEmail,
+      ...(phoneCheck.e164 ? { phone: phoneCheck.e164 } : {}),
       company: trimmedCompany || (consultationInbox ? '' : 'Independent'),
       tier,
       serviceDomain,

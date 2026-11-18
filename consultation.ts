@@ -107,13 +107,18 @@ const services = {
   'web-creation': 'Web Creation & AI Workflows',
 };
 
-function messageFor(inquiry: InquiryRecord, from: string, to: string) {
-  const body = [
+export function formatConsultationEmailBody(inquiry: InquiryRecord): string {
+  const phoneDisplay =
+    typeof inquiry.phone === 'string' && inquiry.phone.trim().length > 0
+      ? inquiry.phone.trim()
+      : 'Not provided';
+  return [
     'Tracking ID: ' + inquiry.id,
     'Submitted (UTC): ' + inquiry.createdAt,
     '',
     'Full name: ' + inquiry.name,
     'Email address: ' + inquiry.email,
+    'Contact number: ' + phoneDisplay,
     'Organization / Practice: ' + (inquiry.company || 'Not provided'),
     'Organization tier: ' + tiers[inquiry.tier],
     'Primary service domain: ' + services[inquiry.serviceDomain],
@@ -122,6 +127,10 @@ function messageFor(inquiry: InquiryRecord, from: string, to: string) {
     'Project context & objectives:',
     inquiry.message,
   ].join('\r\n');
+}
+
+export function messageFor(inquiry: InquiryRecord, from: string, to: string) {
+  const body = formatConsultationEmailBody(inquiry);
   const bodyLines = Buffer.from(body).toString('base64').match(/.{1,76}/g) ?? [];
   return Buffer.from([
     'From: ' + from,

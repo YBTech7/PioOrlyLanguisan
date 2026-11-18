@@ -179,7 +179,67 @@ describe('API & Security Hardening', () => {
     });
     expect(badKey.status).toBe(400);
 
-    // Valid submissions yield collision-resistant IDs
+    // Reject invalid non-empty phone number
+    const badPhone = await fetch(`${baseUrl}/api/inquiries`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Alex Rivera',
+        email: 'alex@example.com',
+        phone: '12345',
+        phoneCountry: 'PH',
+        tier: 'startup',
+        serviceDomain: 'data-analytics',
+        message: 'Testing invalid phone validation rejection cleanly.',
+      }),
+    });
+    expect(badPhone.status).toBe(400);
+
+    // Accept formatted local Philippine number & normalize to E.164
+    const phRes = await fetch(`${baseUrl}/api/inquiries`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Marco Reyes',
+        email: 'marco@example.com',
+        phone: '(0917) 123-4567',
+        phoneCountry: 'PH',
+        company: 'Manila Ops',
+        tier: 'smb',
+        serviceDomain: 'technical-support',
+        timeline: 'Within 30 days',
+        message: 'Testing normalized Philippine phone storage in E.164 format.',
+      }),
+    });
+    expect(phRes.status).toBe(201);
+    const phJson = await phRes.json();
+    expect(phJson.inquiry.phone).toBe('+639171234567');
+
+    // Accept international +1 shared dialing code number (Canada)
+    const caRes = await fetch(`${baseUrl}/api/inquiries`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Claire Tremblay',
+        email: 'claire@example.ca',
+        phone: '+1 (416) 555-0199',
+        company: 'Toronto Advisory',
+        tier: 'enterprise',
+        serviceDomain: 'account-management',
+        timeline: 'This quarter',
+        message: 'Testing normalized Canadian +1 international phone number.',
+      }),
+    });
+    expect(caRes.status).toBe(201);
+    const caJson = await caRes.json();
+    expect(caJson.inquiry.phone).toBe('+14165550199');
+
+    // Ensure public /api/content and /api/health do not expose phone numbers
+    const publicContent = await (await fetch(`${baseUrl}/api/content`)).text();
+    expect(publicContent).not.toContain('+639171234567');
+    expect(publicContent).not.toContain('+14165550199');
+
+    // Valid email-only submissions omit phone and yield collision-resistant IDs
     const ids = new Set<string>();
     for (let i = 0; i < 3; i++) {
       const valid = await fetch(`${baseUrl}/api/inquiries`, {
@@ -188,6 +248,7 @@ describe('API & Security Hardening', () => {
         body: JSON.stringify({
           name: `Alex Rivera ${i}`,
           email: `alex${i}@example.com`,
+          phone: '   ',
           company: 'Acme Ops',
           tier: 'startup',
           serviceDomain: 'data-analytics',
@@ -198,6 +259,7 @@ describe('API & Security Hardening', () => {
       expect(valid.status).toBe(201);
       const json = await valid.json();
       expect(json.inquiry.id).toMatch(/^INQ-\d{4}-[0-9A-F]{8}$/);
+      expect(json.inquiry.phone).toBeUndefined();
       ids.add(json.inquiry.id);
     }
     expect(ids.size).toBe(3);

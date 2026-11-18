@@ -2,7 +2,13 @@ import React, { useEffect, useRef, useState } from 'react';
 import { CheckCircle2, Send } from 'lucide-react';
 import { CLIENT_TIER_SOLUTIONS, SERVICE_OFFERINGS } from '../data/profileData';
 import { ApiError, apiFetch } from '../lib/apiClient';
+import {
+  DEFAULT_PHONE_COUNTRY,
+  validateAndNormalizePhone,
+  type CountryCode,
+} from '../lib/phone';
 import type { ClientTierId, InquiryRecord, ServiceDomainId } from '../types';
+import { PhoneNumberField } from './PhoneNumberField';
 
 interface ConsultationSectionProps {
   preselectedTier: ClientTierId;
@@ -19,6 +25,9 @@ export const ConsultationSection: React.FC<ConsultationSectionProps> = ({
 }) => {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
+  const [phoneCountry, setPhoneCountry] = useState<CountryCode>(DEFAULT_PHONE_COUNTRY);
+  const [phone, setPhone] = useState('');
+  const [phoneError, setPhoneError] = useState<string | null>(null);
   const [company, setCompany] = useState('');
   const [tier, setTier] = useState<ClientTierId>(preselectedTier);
   const [serviceDomain, setServiceDomain] = useState<ServiceDomainId>(preselectedService);
@@ -51,6 +60,7 @@ export const ConsultationSection: React.FC<ConsultationSectionProps> = ({
     e.preventDefault();
     if (submittingRef.current) return;
     setError(null);
+    setPhoneError(null);
 
     if (name.trim().length < 2) {
       setError('Please enter your full name.');
@@ -58,6 +68,14 @@ export const ConsultationSection: React.FC<ConsultationSectionProps> = ({
     }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
       setError('Please enter a valid work or personal email address.');
+      return;
+    }
+    const phoneCheck = validateAndNormalizePhone(phone, phoneCountry);
+    if (!phoneCheck.valid) {
+      setPhoneError(
+        phoneCheck.error || 'Please enter a valid international contact number.'
+      );
+      document.getElementById('consult-phone')?.focus();
       return;
     }
     if (message.trim().length < 10) {
@@ -68,7 +86,7 @@ export const ConsultationSection: React.FC<ConsultationSectionProps> = ({
     submittingRef.current = true;
     setSubmitting(true);
     try {
-      const fields = {
+      const fields: Record<string, string> = {
         name: name.trim(),
         email: email.trim(),
         company: company.trim(),
@@ -78,6 +96,9 @@ export const ConsultationSection: React.FC<ConsultationSectionProps> = ({
         message: message.trim(),
         website,
       };
+      if (phoneCheck.e164) {
+        fields.phone = phoneCheck.e164;
+      }
       const payload = JSON.stringify(fields);
       if (submission.current?.payload !== payload) {
         const nextKey =
@@ -97,12 +118,23 @@ export const ConsultationSection: React.FC<ConsultationSectionProps> = ({
       setSubmittedRecord(data.inquiry);
       setName('');
       setEmail('');
+      setPhone('');
+      setPhoneCountry(DEFAULT_PHONE_COUNTRY);
+      setPhoneError(null);
       setCompany('');
       setMessage('');
       setWebsite('');
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) submission.current = null;
-      setError(err instanceof Error ? err.message : 'Submission failed. Please try again.');
+      if (
+        err instanceof ApiError &&
+        err.status === 400 &&
+        /contact number|phone/i.test(err.message)
+      ) {
+        setPhoneError(err.message);
+      } else {
+        setError(err instanceof Error ? err.message : 'Submission failed. Please try again.');
+      }
     } finally {
       submittingRef.current = false;
       setSubmitting(false);
@@ -225,6 +257,20 @@ export const ConsultationSection: React.FC<ConsultationSectionProps> = ({
                       />
                     </div>
                   </div>
+
+                  <PhoneNumberField
+                    country={phoneCountry}
+                    value={phone}
+                    error={phoneError}
+                    onCountryChange={(nextCountry) => {
+                      setPhoneCountry(nextCountry);
+                      if (phoneError) setPhoneError(null);
+                    }}
+                    onValueChange={(nextValue) => {
+                      setPhone(nextValue);
+                      if (phoneError) setPhoneError(null);
+                    }}
+                  />
 
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     <div>

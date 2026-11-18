@@ -384,6 +384,29 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                               {inq.company ? ` — ${inq.company}` : ''}
                             </h3>
                             <p className="text-xs text-[#F5F2EB]/65">{inq.email}</p>
+                            {(() => {
+                              const rawPhone =
+                                typeof inq.phone === 'string' ? inq.phone.trim() : '';
+                              const telTarget = rawPhone.replace(/[^\d+]/g, '');
+                              const hasDialablePhone = Boolean(
+                                rawPhone && /^\+?\d+$/.test(telTarget)
+                              );
+                              return (
+                                <p className="mt-0.5 text-xs text-[#F5F2EB]/70">
+                                  Contact number:{' '}
+                                  {hasDialablePhone ? (
+                                    <a
+                                      href={`tel:${telTarget}`}
+                                      className="font-mono text-[#E5CE93] underline decoration-[#C8A253]/50 underline-offset-2 hover:text-[#F5F2EB] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C8A253]"
+                                    >
+                                      {rawPhone}
+                                    </a>
+                                  ) : (
+                                    <span>Not provided</span>
+                                  )}
+                                </p>
+                              );
+                            })()}
                             {emailLabel && (
                               <p className="mt-1.5 text-xs text-[#DFC585]">
                                 Email: <span className="font-semibold">{emailLabel}</span>
