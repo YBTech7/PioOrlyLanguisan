@@ -134,15 +134,27 @@ function messageFor(inquiry: InquiryRecord, from: string, to: string) {
   ].join('\r\n')).toString('base64url');
 }
 
-export function runConsultationMailer(inbox: ReturnType<typeof openInbox>) {
+export function getConsultationMailerConfig() {
   const from = process.env.CONSULTATION_EMAIL_FROM ?? '';
   const to = process.env.CONSULTATION_EMAIL_TO ?? '';
   const { GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN } = process.env;
   if (!emailAddress.test(from) || !emailAddress.test(to) ||
       !GMAIL_CLIENT_ID || !GMAIL_CLIENT_SECRET || !GMAIL_REFRESH_TOKEN) {
+    return null;
+  }
+  return {
+    from, to, GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN,
+    sameSenderRecipient: from.toLowerCase() === to.toLowerCase(),
+  };
+}
+
+export function runConsultationMailer(inbox: ReturnType<typeof openInbox>) {
+  const config = getConsultationMailerConfig();
+  if (!config) {
     console.warn('Consultation emails are queued until Gmail is configured.');
     return;
   }
+  const { from, to, GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN } = config;
 
   async function deliver(job: Job) {
     const retry = job.attempts < 5 ? 'pending' : 'review';
@@ -152,9 +164,9 @@ export function runConsultationMailer(inbox: ReturnType<typeof openInbox>) {
         method: 'POST',
         body: new URLSearchParams({
           grant_type: 'refresh_token',
-          client_id: GMAIL_CLIENT_ID!,
-          client_secret: GMAIL_CLIENT_SECRET!,
-          refresh_token: GMAIL_REFRESH_TOKEN!,
+          client_id: GMAIL_CLIENT_ID,
+          client_secret: GMAIL_CLIENT_SECRET,
+          refresh_token: GMAIL_REFRESH_TOKEN,
         }),
         signal: AbortSignal.timeout(10000),
       });
