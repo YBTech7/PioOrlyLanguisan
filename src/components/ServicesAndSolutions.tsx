@@ -103,7 +103,6 @@ export const ServicesAndSolutions: React.FC<ServicesAndSolutionsProps> = ({
       const data = await apiFetch<{ scope: AiScopeRecommendation }>('/api/assistant/scope', {
         method: 'POST',
         body: JSON.stringify({ goal: goalInput.trim() }),
-        timeoutMs: 25000,
       });
       setScopeResult(data.scope);
     } catch (err) {

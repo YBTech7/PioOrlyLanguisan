@@ -1,15 +1,3 @@
-/** Resolve stored asset paths for both local Vite and GitHub Pages hosting. */
-export function resolveAssetUrl(url: string, base = import.meta.env?.BASE_URL || '/'): string {
-  if (!url) return url;
-  if (/^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(url)) return url;
-
-  const normalizedBase = base.endsWith('/') ? base : `${base}/`;
-  const relativePath = url.startsWith(normalizedBase)
-    ? url.slice(normalizedBase.length)
-    : url.replace(/^\/+/, '');
-  return `${normalizedBase}${relativePath.replace(/^src\/assets\//, 'assets/')}`;
-}
-
 import type {
   ClientTierSolution,
   FaqItem,
@@ -19,13 +7,36 @@ import type {
 } from '../types.ts';
 
 export const NETWORK_VISUAL_URL =
-  resolveAssetUrl('assets/images/blockchain_network_visual_1794901227232.jpg');
+  'assets/images/blockchain_network_visual_1794901227232.jpg';
 
 export const ANALYTICS_VISUAL_URL =
-  resolveAssetUrl('assets/images/analytics_dashboard_visual_1794901227040.jpg');
+  'assets/images/analytics_dashboard_visual_1794901227040.jpg';
 
 export const WORKFLOW_VISUAL_URL =
-  resolveAssetUrl('assets/images/ai_automation_workflow_1794901228479.jpg');
+  'assets/images/ai_automation_workflow_1794901228479.jpg';
+
+export function resolveAssetUrl(assetPath: string, baseOverride?: string): string {
+  if (!assetPath) return '';
+  if (
+    assetPath.startsWith('data:') ||
+    assetPath.startsWith('http://') ||
+    assetPath.startsWith('https://')
+  ) {
+    return assetPath;
+  }
+
+  const baseUrl =
+    baseOverride ??
+    ((import.meta as { env?: { BASE_URL?: string } }).env?.BASE_URL ?? '/');
+  const normalizedBase = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
+
+  let cleanPath = assetPath.replace(/^\/+/, '');
+  if (cleanPath.startsWith('src/assets/')) {
+    cleanPath = cleanPath.slice(4);
+  }
+
+  return `${normalizedBase}${cleanPath}`;
+}
 
 export const SERVICE_OFFERINGS: ServiceOffering[] = [
   {

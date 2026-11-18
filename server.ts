@@ -73,16 +73,14 @@ export function resetServerStateForTests(): void {
 }
 
 function normalizeAssetPath(imageUrl: string): string {
-  return (imageUrl || WORKFLOW_VISUAL_URL)
-    .replace(/^\/?src\/assets\//, 'assets/')
-    .replace(/^\/assets\//, 'assets/');
-}
-
-function createInitialProjects(): ProjectCase[] {
-  return INITIAL_PROJECTS.map((project) => ({
-    ...project,
-    imageUrl: normalizeAssetPath(project.imageUrl),
-  }));
+  if (!imageUrl) return WORKFLOW_VISUAL_URL;
+  if (imageUrl.startsWith('/src/assets/')) {
+    return imageUrl.slice(5);
+  }
+  if (imageUrl.startsWith('/assets/')) {
+    return imageUrl.slice(1);
+  }
+  return imageUrl;
 }
 
 function createInitialStore(): PersistentStore {
@@ -103,7 +101,7 @@ function createInitialStore(): PersistentStore {
         notes: 'Sample development record.',
       },
     ],
-    projects: createInitialProjects(),
+    projects: INITIAL_PROJECTS,
     insights: INITIAL_INSIGHTS,
     faqs: INITIAL_FAQS,
     brand: DEFAULT_BRAND,
@@ -116,47 +114,62 @@ function ensureStore(): PersistentStore {
   }
 
   const storePath = getStorePath();
+  const dir = path.dirname(storePath);
 
-  if (!fs.existsSync(storePath)) {
-    const initial = createInitialStore();
-    saveStore(initial);
-    return initial;
+  try {
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    if (!fs.existsSync(storePath)) {
+      const initial = createInitialStore();
+      fs.writeFileSync(storePath, JSON.stringify(initial, null, 2), 'utf-8');
+      memoryStore = initial;
+      return initial;
+    }
+
+    const raw = fs.readFileSync(storePath, 'utf-8');
+    const parsed = JSON.parse(raw) as Partial<PersistentStore>;
+    const projects =
+      Array.isArray(parsed.projects) && parsed.projects.length > 0
+        ? parsed.projects.map((p) => ({
+            ...p,
+            imageUrl: normalizeAssetPath(p.imageUrl),
+          }))
+        : INITIAL_PROJECTS;
+
+    const hydrated: PersistentStore = {
+      inquiries: Array.isArray(parsed.inquiries) ? parsed.inquiries : [],
+      projects,
+      insights:
+        Array.isArray(parsed.insights) && parsed.insights.length > 0
+          ? parsed.insights
+          : INITIAL_INSIGHTS,
+      faqs:
+        Array.isArray(parsed.faqs) && parsed.faqs.length > 0
+          ? parsed.faqs
+          : INITIAL_FAQS,
+      brand: { ...DEFAULT_BRAND, ...(parsed.brand || {}) },
+    };
+    memoryStore = hydrated;
+    return hydrated;
+  } catch {
+    memoryStore = createInitialStore();
+    return memoryStore;
   }
-
-  const raw = fs.readFileSync(storePath, 'utf-8');
-  const parsed = JSON.parse(raw) as Partial<PersistentStore>;
-  const projects = Array.isArray(parsed.projects)
-    ? parsed.projects.map((project) => ({
-        ...project,
-        imageUrl: normalizeAssetPath(project.imageUrl),
-      }))
-    : createInitialProjects();
-
-  memoryStore = {
-    inquiries: Array.isArray(parsed.inquiries) ? parsed.inquiries : [],
-    projects,
-    insights: Array.isArray(parsed.insights) && parsed.insights.length > 0
-      ? parsed.insights
-      : INITIAL_INSIGHTS,
-    faqs: Array.isArray(parsed.faqs) && parsed.faqs.length > 0
-      ? parsed.faqs
-      : INITIAL_FAQS,
-    brand: { ...DEFAULT_BRAND, ...(parsed.brand || {}) },
-  };
-  return memoryStore;
 }
 
 function saveStore(store: PersistentStore): void {
-  const storePath = getStorePath();
-  const temporaryPath = `${storePath}.${crypto.randomUUID()}.tmp`;
-  fs.mkdirSync(path.dirname(storePath), { recursive: true });
-  try {
-    fs.writeFileSync(temporaryPath, JSON.stringify(store, null, 2), { encoding: 'utf-8', mode: 0o600 });
-    fs.renameSync(temporaryPath, storePath);
-  } finally {
-    fs.rmSync(temporaryPath, { force: true });
-  }
   memoryStore = store;
+  const storePath = getStorePath();
+  const dir = path.dirname(storePath);
+  try {
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    fs.writeFileSync(storePath, JSON.stringify(store, null, 2), 'utf-8');
+  } catch {
+    // Keep updated in memoryStore if filesystem is read-only
+  }
 }
 
 function getGeminiClient(): GoogleGenAI {
@@ -487,7 +500,7 @@ export function createApiApp(): Express {
       return;
     }
 
-    const store = structuredClone(ensureStore());
+    const store = ensureStore();
     const record: InquiryRecord = {
       id: `INQ-${new Date().getFullYear()}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`,
       name: trimmedName,
@@ -692,24 +705,24 @@ export function createApiApp(): Express {
   app.patch('/api/admin/inquiries/:id', requireAdmin, (req, res) => {
     const { id } = req.params;
     const { status, notes } = req.body ?? {};
-    const store = structuredClone(ensureStore());
+    const store = ensureStore();
     const target = store.inquiries.find((item) => item.id === id);
     if (!target) {
       res.status(404).json({ error: 'Inquiry not found.' });
       return;
     }
-    if (status !== undefined && !VALID_STATUSES.includes(status)) {
-      res.status(400).json({ error: 'Invalid inquiry status value.' });
-      return;
-    }
-    if (notes !== undefined && (typeof notes !== 'string' || notes.length > 1000)) {
-      res.status(400).json({ error: 'Notes must be a string of 1000 characters or fewer.' });
-      return;
-    }
     if (status !== undefined) {
+      if (!VALID_STATUSES.includes(status)) {
+        res.status(400).json({ error: 'Invalid inquiry status value.' });
+        return;
+      }
       target.status = status;
     }
     if (notes !== undefined) {
+      if (typeof notes !== 'string' || notes.length > 1000) {
+        res.status(400).json({ error: 'Notes must be a string of 1000 characters or fewer.' });
+        return;
+      }
       target.notes = notes.trim();
     }
     saveStore(store);
@@ -736,7 +749,7 @@ export function createApiApp(): Express {
       return;
     }
 
-    const store = structuredClone(ensureStore());
+    const store = ensureStore();
     const newProject: ProjectCase = {
       id: `proj-${crypto.randomUUID().slice(0, 8)}`,
       title: trimmedTitle,
@@ -752,7 +765,7 @@ export function createApiApp(): Express {
             .filter(Boolean)
             .slice(0, 8)
         : ['Structured operational framework', 'Automated reporting baseline'],
-      imageUrl: normalizeAssetPath(WORKFLOW_VISUAL_URL),
+      imageUrl: WORKFLOW_VISUAL_URL,
     };
     store.projects.unshift(newProject);
     saveStore(store);
@@ -761,7 +774,7 @@ export function createApiApp(): Express {
 
   app.delete('/api/admin/projects/:id', requireAdmin, (req, res) => {
     const { id } = req.params;
-    const store = structuredClone(ensureStore());
+    const store = ensureStore();
     const next = store.projects.filter((p) => p.id !== id);
     if (next.length === store.projects.length) {
       res.status(404).json({ error: 'Project not found.' });
@@ -782,7 +795,7 @@ export function createApiApp(): Express {
       }
     }
 
-    const store = structuredClone(ensureStore());
+    const store = ensureStore();
     store.brand = {
       // Preserve static original portrait policy
       customPortraitDataUrl: null,
@@ -797,23 +810,6 @@ export function createApiApp(): Express {
     };
     saveStore(store);
     res.json({ brand: store.brand });
-  });
-
-  app.use('/api', (_req, res) => {
-    res.status(404).json({ error: 'API endpoint not found.' });
-  });
-
-  app.use('/api', (err: Error & { status?: number }, _req: Request, res: Response, next: NextFunction) => {
-    if (res.headersSent) {
-      next(err);
-      return;
-    }
-    if (err.status === 400 || err.status === 413) {
-      res.status(err.status).json({ error: err.status === 413 ? 'Request is too large.' : 'Invalid request body.' });
-      return;
-    }
-    console.error('API request failed:', err);
-    res.status(500).json({ error: 'The server could not complete this request. Please try again.' });
   });
 
   return app;

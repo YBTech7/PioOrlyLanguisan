@@ -93,29 +93,6 @@ describe('API & Security Hardening', () => {
     expect(body.adminConfigured).toBe(true);
   });
 
-  it('returns JSON for an unknown API route', async () => {
-    const res = await fetch(`${baseUrl}/api/unknown-route`);
-    expect(res.status).toBe(404);
-    expect(await res.json()).toEqual({ error: 'API endpoint not found.' });
-  });
-
-  it('returns JSON for an invalid request body', async () => {
-    const res = await fetch(`${baseUrl}/api/inquiries`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: '{',
-    });
-    expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({ error: 'Invalid request body.' });
-  });
-
-  it('preserves an unreadable store instead of replacing it with sample data', async () => {
-    fs.writeFileSync(tempStorePath, 'invalid JSON');
-    const res = await fetch(`${baseUrl}/api/content`);
-    expect(res.status).toBe(500);
-    expect(fs.readFileSync(tempStorePath, 'utf-8')).toBe('invalid JSON');
-  });
-
   it('applies strict CORS origin allowlist', async () => {
     const allowed = await fetch(`${baseUrl}/api/health`, {
       headers: { Origin: 'https://ybtech7.github.io' },

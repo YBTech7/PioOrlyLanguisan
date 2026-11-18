@@ -69,7 +69,6 @@ export const AiAdvisorDrawer: React.FC<AiAdvisorDrawerProps> = ({
       const data = await apiFetch<{ reply: string }>('/api/assistant', {
         method: 'POST',
         body: JSON.stringify({ messages: nextMessages }),
-        timeoutMs: 25000,
       });
       setMessages((prev) => [
         ...prev,
