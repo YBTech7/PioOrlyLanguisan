@@ -1,59 +1,35 @@
 import React from 'react';
+import { BRAND_EMBLEM_URL, resolveAssetUrl } from '../data/profileData';
 
 interface BrandMarkProps {
   customLogoUrl?: string | null;
   size?: number;
   className?: string;
+  decorative?: boolean;
+  alt?: string;
 }
 
 export const BrandMark: React.FC<BrandMarkProps> = ({
   customLogoUrl,
-  size = 34,
+  size = 36,
   className = '',
+  decorative = true,
+  alt = 'Pio Languisan monogram',
 }) => {
-  if (customLogoUrl) {
-    return (
-      <img
-        src={customLogoUrl}
-        alt="PL monogram"
-        width={size}
-        height={size}
-        referrerPolicy="no-referrer"
-        className={`rounded-lg object-contain shrink-0 ${className}`}
-        style={{ width: size, height: size }}
-      />
-    );
-  }
+  const isCustom = Boolean(customLogoUrl);
+  const src = customLogoUrl || resolveAssetUrl(BRAND_EMBLEM_URL);
 
   return (
-    <svg
+    <img
+      src={src}
+      alt={decorative ? '' : alt}
+      aria-hidden={decorative ? true : undefined}
       width={size}
       height={size}
-      viewBox="0 0 40 40"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-      aria-hidden="true"
-      className={`shrink-0 ${className}`}
-    >
-      <rect
-        x="1"
-        y="1"
-        width="38"
-        height="38"
-        rx="8"
-        fill="#0D2B32"
-        stroke="#C8A253"
-        strokeWidth="1.25"
-      />
-      <path
-        d="M11 29V11H18.5C21.8 11 23.8 12.8 23.8 15.8C23.8 18.8 21.8 20.6 18.5 20.6H14.2V29H11ZM14.2 17.9H18.1C19.7 17.9 20.6 17.1 20.6 15.8C20.6 14.5 19.7 13.7 18.1 13.7H14.2V17.9Z"
-        fill="#F5F2EB"
-      />
-      <path
-        d="M23.5 29V19.2H26.6V26.2H31.5V29H23.5Z"
-        fill="#C8A253"
-      />
-      <circle cx="29.5" cy="13.5" r="1.75" fill="#E5CE93" />
-    </svg>
+      decoding="async"
+      referrerPolicy={isCustom ? 'no-referrer' : undefined}
+      className={`block shrink-0 object-contain ${isCustom ? 'rounded-md' : ''} ${className}`.trim()}
+      style={{ width: size, height: size }}
+    />
   );
 };

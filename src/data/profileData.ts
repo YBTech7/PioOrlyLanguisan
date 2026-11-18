@@ -6,6 +6,9 @@ import type {
   ServiceOffering,
 } from '../types.ts';
 
+export const BRAND_EMBLEM_URL =
+  'assets/images/pl-circular-emblem.png';
+
 export const NETWORK_VISUAL_URL =
   'assets/images/blockchain_network_visual_1794901227232.jpg';
 

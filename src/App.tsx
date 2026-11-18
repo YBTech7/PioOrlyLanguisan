@@ -153,9 +153,9 @@ export default function App() {
       <footer className="relative z-10 border-t border-[#C8A253]/15 bg-[#05111A] py-10">
         <div className="mx-auto flex max-w-[1280px] flex-col justify-between gap-6 px-5 sm:px-8 md:flex-row md:items-center">
           <div className="flex items-center gap-3">
-            <BrandMark customLogoUrl={brand.customLogoDataUrl} size={28} />
+            <BrandMark customLogoUrl={brand.customLogoDataUrl} size={36} decorative />
             <div>
-              <p className="font-display text-sm font-semibold text-[#F5F2EB]">
+              <p className="font-display text-sm font-semibold leading-snug text-[#F5F2EB]">
                 Pio Languisan
               </p>
               <p className="text-xs text-[#C2D0D6]">

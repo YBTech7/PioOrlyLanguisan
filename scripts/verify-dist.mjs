@@ -10,8 +10,12 @@ const normalizedBase = basePath.endsWith('/') ? basePath : `${basePath}/`;
 const EXPECTED_PORTRAIT_SHA256 =
   '395c1f53a5bd9f09249279a7aa5d33fad27c0cd9c014f9ebce54925a258fdbc5';
 
+const EXPECTED_EMBLEM_SHA256 =
+  '97b27240df101c59508930f5aa0a8621a716de3d31ebbb853e6e8a05c62ac312';
+
 const REQUIRED_PUBLIC_ASSETS = [
   'favicon.svg',
+  'assets/images/pl-circular-emblem.png',
   'assets/images/portrait-pio-languisan.png',
   'assets/images/ai_automation_workflow_1794901228479.jpg',
   'assets/images/analytics_dashboard_visual_1794901227040.jpg',
@@ -70,6 +74,18 @@ const portraitHash = crypto
 if (portraitHash !== EXPECTED_PORTRAIT_SHA256) {
   fail(
     `Portrait integrity mismatch! Expected ${EXPECTED_PORTRAIT_SHA256}, got ${portraitHash}.`
+  );
+}
+
+const emblemPath = path.join(distDir, 'assets/images/pl-circular-emblem.png');
+const emblemHash = crypto
+  .createHash('sha256')
+  .update(fs.readFileSync(emblemPath))
+  .digest('hex');
+
+if (emblemHash !== EXPECTED_EMBLEM_SHA256) {
+  fail(
+    `Emblem integrity mismatch! Expected ${EXPECTED_EMBLEM_SHA256}, got ${emblemHash}.`
   );
 }
 

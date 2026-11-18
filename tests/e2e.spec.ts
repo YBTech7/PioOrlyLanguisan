@@ -79,11 +79,58 @@ test.describe('Pio Languisan Portfolio Platform E2E', () => {
       }));
     });
 
-    expect(imageStates.length).toBeGreaterThanOrEqual(5);
+    expect(imageStates.length).toBeGreaterThanOrEqual(7);
     for (const img of imageStates) {
       expect(img.complete, `Image not complete: ${img.src}`).toBe(true);
       expect(img.naturalWidth, `Image broken (naturalWidth 0): ${img.src}`).toBeGreaterThan(0);
     }
+
+    // Verify circular PL emblem in header & footer: optimized dimensions, decorative screen reader treatment, zero square frame
+    const brandLink = page.getByRole('banner').getByRole('link', { name: 'Pio Languisan' });
+    await expect(brandLink).toBeVisible();
+    const headerBrandInfo = await brandLink.evaluate((anchor) => {
+      const img = anchor.querySelector('img');
+      const span = anchor.querySelector('span');
+      const aRect = anchor.getBoundingClientRect();
+      const imgRect = img?.getBoundingClientRect();
+      const spanRect = span?.getBoundingClientRect();
+      const imgStyle = img ? window.getComputedStyle(img) : null;
+      return {
+        anchorHeight: aRect.height,
+        imgSrc: img?.getAttribute('src') || '',
+        imgAlt: img?.getAttribute('alt'),
+        imgAriaHidden: img?.getAttribute('aria-hidden'),
+        imgWidthAttr: img?.getAttribute('width'),
+        imgHeightAttr: img?.getAttribute('height'),
+        naturalWidth: img?.naturalWidth || 0,
+        naturalHeight: img?.naturalHeight || 0,
+        borderWidth: imgStyle?.borderWidth || '',
+        borderRadius: imgStyle?.borderRadius || '',
+        verticalCenterDiff:
+          imgRect && spanRect
+            ? Math.abs(
+                imgRect.top + imgRect.height / 2 - (spanRect.top + spanRect.height / 2)
+              )
+            : 999,
+      };
+    });
+    expect(headerBrandInfo.anchorHeight).toBeGreaterThanOrEqual(44);
+    expect(headerBrandInfo.imgSrc).toMatch(/assets\/images\/pl-circular-emblem\.png$/);
+    expect(headerBrandInfo.imgAlt).toBe('');
+    expect(headerBrandInfo.imgAriaHidden).toBe('true');
+    expect(headerBrandInfo.imgWidthAttr).toBe('36');
+    expect(headerBrandInfo.imgHeightAttr).toBe('36');
+    expect(headerBrandInfo.naturalWidth).toBe(256);
+    expect(headerBrandInfo.naturalHeight).toBe(256);
+    expect(headerBrandInfo.borderWidth).toBe('0px');
+    expect(headerBrandInfo.borderRadius).toBe('0px');
+    expect(headerBrandInfo.verticalCenterDiff).toBeLessThanOrEqual(4);
+
+    // Verify footer uses the same circular emblem consistently
+    const footerEmblem = page.locator('footer img').first();
+    await expect(footerEmblem).toHaveAttribute('src', /assets\/images\/pl-circular-emblem\.png$/);
+    await expect(footerEmblem).toHaveAttribute('aria-hidden', 'true');
+    await expect(footerEmblem).toHaveAttribute('alt', '');
 
     // Verify new portrait alt text, filename, natural aspect, and static non-distorted CSS rules
     const portrait = page.getByAltText('Portrait of Pio Languisan');
@@ -113,6 +160,16 @@ test.describe('Pio Languisan Portfolio Platform E2E', () => {
     expect(portraitStyles.opacity).toBe('1');
     expect(portraitStyles.rectWidth).toBeGreaterThan(200);
     expect(portraitStyles.rectHeight).toBeGreaterThan(220);
+
+    // Verify keyboard focus & Enter scroll-to-top on header brand link
+    await page.locator('#contact').scrollIntoViewIfNeeded();
+    await page.waitForTimeout(200);
+    await brandLink.focus();
+    await expect(brandLink).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect
+      .poll(() => page.evaluate(() => window.scrollY), { timeout: 2500 })
+      .toBeLessThan(120);
 
     // Verify zero console errors, page errors, and broken assets
     expect(consoleErrors, `Console errors: ${consoleErrors.join('\n')}`).toEqual([]);

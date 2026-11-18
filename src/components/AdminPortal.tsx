@@ -468,8 +468,8 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                     Official PL Monogram Logo
                   </h3>
                   <p className="text-xs leading-relaxed text-[#F5F2EB]/70">
-                    Upload your custom PL logo file (PNG, JPEG, or WebP, max 2MB) to replace the
-                    geometric vector monogram in the navigation bar and footer.
+                    Upload your custom PL logo file (PNG, JPEG, or WebP, max 2MB) to override the
+                    default circular PL emblem in the navigation bar and footer.
                   </p>
                   <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg bg-[#144B54] px-4 py-2 text-xs font-semibold text-[#F5F2EB] hover:bg-[#195E69]">
                     <Upload className="h-3.5 w-3.5" aria-hidden="true" />

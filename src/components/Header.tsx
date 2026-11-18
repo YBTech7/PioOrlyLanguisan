@@ -45,10 +45,10 @@ export const Header: React.FC<HeaderProps> = ({
         <a
           href="#top"
           onClick={(e) => handleNavClick(e, '#top')}
-          className="flex items-center gap-2.5 whitespace-nowrap shrink-0 rounded-md py-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C8A253] focus-visible:ring-offset-2 focus-visible:ring-offset-[#06141E]"
+          className="inline-flex min-h-[44px] items-center gap-2.5 sm:gap-3 whitespace-nowrap shrink-0 rounded-lg px-1.5 -ml-1.5 py-1 transition-colors hover:text-[#DFC585] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C8A253] focus-visible:ring-offset-2 focus-visible:ring-offset-[#06141E]"
         >
-          <BrandMark customLogoUrl={customLogoUrl} size={30} />
-          <span className="font-display text-base lg:text-lg font-semibold tracking-tight text-[#F5F2EB] whitespace-nowrap shrink-0">
+          <BrandMark customLogoUrl={customLogoUrl} size={36} decorative />
+          <span className="font-display text-base sm:text-[17px] lg:text-lg font-semibold leading-none tracking-tight text-[#F5F2EB] whitespace-nowrap shrink-0">
             Pio Languisan
           </span>
         </a>
