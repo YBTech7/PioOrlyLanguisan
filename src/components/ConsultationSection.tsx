@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { CheckCircle2, Send } from 'lucide-react';
 import { CLIENT_TIER_SOLUTIONS, SERVICE_OFFERINGS } from '../data/profileData';
 import { apiFetch } from '../lib/apiClient';
@@ -25,6 +25,7 @@ export const ConsultationSection: React.FC<ConsultationSectionProps> = ({
   const [timeline, setTimeline] = useState(preselectedTimeline || 'Within 30 days');
   const [message, setMessage] = useState(preselectedSummary || '');
   const [website, setWebsite] = useState('');
+  const submission = useRef<{ payload: string; key: string } | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submittedRecord, setSubmittedRecord] = useState<InquiryRecord | null>(null);
@@ -64,9 +65,7 @@ export const ConsultationSection: React.FC<ConsultationSectionProps> = ({
 
     setSubmitting(true);
     try {
-      const data = await apiFetch<{ inquiry: InquiryRecord }>('/api/inquiries', {
-        method: 'POST',
-        body: JSON.stringify({
+      const fields = {
           name: name.trim(),
           email: email.trim(),
           company: company.trim(),
@@ -75,8 +74,16 @@ export const ConsultationSection: React.FC<ConsultationSectionProps> = ({
           timeline,
           message: message.trim(),
           website,
-        }),
+        };
+      const payload = JSON.stringify(fields);
+      if (submission.current?.payload !== payload) {
+        submission.current = { payload, key: crypto.randomUUID() };
+      }
+      const data = await apiFetch<{ inquiry: InquiryRecord }>('/api/inquiries', {
+        method: 'POST',
+        body: JSON.stringify({ ...fields, submissionKey: submission.current.key }),
       });
+      submission.current = null;
       setSubmittedRecord(data.inquiry);
       setName('');
       setEmail('');

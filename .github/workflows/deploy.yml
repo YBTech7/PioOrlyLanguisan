@@ -4,6 +4,8 @@ name: Deploy React Website
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -29,7 +31,15 @@ jobs:
       - name: Install dependencies
         run: npm install --no-audit --no-fund
 
+      - name: Check API and TypeScript
+        run: |
+          npm run lint
+          npm run test:api
+
       - name: Build website
+        env:
+          VITE_API_BASE_URL: https://welcome-page-production-6941f322.up.railway.app
+          VITE_BASE_PATH: /PioOrlyLanguisan/
         run: npm run build
 
       - name: Verify production files
@@ -42,12 +52,15 @@ jobs:
           fi
 
       - uses: actions/configure-pages@v5
+        if: github.event_name != 'pull_request'
 
       - uses: actions/upload-pages-artifact@v3
+        if: github.event_name != 'pull_request'
         with:
           path: dist
 
   deploy:
+    if: github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
 

@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { consultationInbox, runConsultationMailer } from './consultation.ts';
 import express from 'express';
 import type { Request, Response, NextFunction, Express } from 'express';
 import fs from 'fs';
@@ -439,7 +440,7 @@ export function createApiApp(): Express {
   });
 
   const inquiryLimiter = createRateLimiter('inquiries', 10, 15 * 60 * 1000);
-  app.post('/api/inquiries', inquiryLimiter, (req, res) => {
+  app.post('/api/inquiries', inquiryLimiter, async (req, res) => {
     const { name, email, company, tier, serviceDomain, timeline, message, website } =
       req.body ?? {};
 
@@ -500,12 +501,11 @@ export function createApiApp(): Express {
       return;
     }
 
-    const store = ensureStore();
     const record: InquiryRecord = {
       id: `INQ-${new Date().getFullYear()}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`,
       name: trimmedName,
       email: trimmedEmail,
-      company: trimmedCompany || 'Independent',
+      company: trimmedCompany || (consultationInbox ? '' : 'Independent'),
       tier,
       serviceDomain,
       timeline: trimmedTimeline,
@@ -514,10 +514,25 @@ export function createApiApp(): Express {
       createdAt: new Date().toISOString(),
     };
 
-    store.inquiries.unshift(record);
-    saveStore(store);
-
-    res.status(201).json({ inquiry: record });
+    const key = req.body?.submissionKey;
+    if (key !== undefined && (typeof key !== 'string' || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(key))) {
+      res.status(400).json({ error: 'Invalid submission reference.' });
+      return;
+    }
+    try {
+      if (consultationInbox) {
+        const inquiry = await consultationInbox.save(record, key ?? crypto.randomUUID());
+        res.status(201).json({ inquiry });
+        return;
+      }
+      const store = structuredClone(ensureStore());
+      store.inquiries.unshift(record);
+      saveStore(store);
+      res.status(201).json({ inquiry: record });
+    } catch {
+      console.error('Consultation storage failed.');
+      res.status(503).json({ error: 'We could not save your request. Please try again.' });
+    }
   });
 
   const aiLimiter = createRateLimiter('assistant', 20, 5 * 60 * 1000);
@@ -693,40 +708,56 @@ export function createApiApp(): Express {
     res.json({ ok: true });
   });
 
-  app.get('/api/admin/dashboard', requireAdmin, (_req, res) => {
-    const store = ensureStore();
-    res.json({
-      inquiries: store.inquiries,
-      projects: store.projects,
-      brand: store.brand,
-    });
+  app.get('/api/admin/dashboard', requireAdmin, async (_req, res) => {
+    try {
+      const store = ensureStore();
+      const records = consultationInbox ? await consultationInbox.list() : [];
+      const ids = new Set(records.map((record) => record.id));
+      res.json({
+        inquiries: [...records, ...store.inquiries.filter((record) => !ids.has(record.id))],
+        projects: store.projects,
+        brand: store.brand,
+      });
+    } catch {
+      res.status(503).json({ error: 'The inquiry inbox is temporarily unavailable.' });
+    }
   });
 
-  app.patch('/api/admin/inquiries/:id', requireAdmin, (req, res) => {
-    const { id } = req.params;
+  app.patch('/api/admin/inquiries/:id', requireAdmin, async (req, res) => {
     const { status, notes } = req.body ?? {};
-    const store = ensureStore();
-    const target = store.inquiries.find((item) => item.id === id);
-    if (!target) {
-      res.status(404).json({ error: 'Inquiry not found.' });
-      return;
-    }
+    const changes: Partial<InquiryRecord> = {};
     if (status !== undefined) {
       if (!VALID_STATUSES.includes(status)) {
         res.status(400).json({ error: 'Invalid inquiry status value.' });
         return;
       }
-      target.status = status;
+      changes.status = status;
     }
     if (notes !== undefined) {
       if (typeof notes !== 'string' || notes.length > 1000) {
         res.status(400).json({ error: 'Notes must be a string of 1000 characters or fewer.' });
         return;
       }
-      target.notes = notes.trim();
+      changes.notes = notes.trim();
     }
-    saveStore(store);
-    res.json({ inquiry: target });
+    try {
+      const saved = consultationInbox && await consultationInbox.update(req.params.id, changes);
+      if (saved) {
+        res.json({ inquiry: saved });
+        return;
+      }
+      const store = structuredClone(ensureStore());
+      const target = store.inquiries.find((item) => item.id === req.params.id);
+      if (!target) {
+        res.status(404).json({ error: 'Inquiry not found.' });
+        return;
+      }
+      Object.assign(target, changes);
+      saveStore(store);
+      res.json({ inquiry: target });
+    } catch {
+      res.status(503).json({ error: 'The inquiry could not be updated. Please try again.' });
+    }
   });
 
   app.post('/api/admin/projects', requireAdmin, (req, res) => {
@@ -843,6 +874,8 @@ async function startServer() {
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
+
+  if (consultationInbox) runConsultationMailer(consultationInbox);
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on http://0.0.0.0:${PORT}`);
