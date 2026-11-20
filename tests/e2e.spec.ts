@@ -502,7 +502,24 @@ test.describe('Pio Languisan Portfolio Platform E2E', () => {
     await page.route('**/api/admin/cases/INQ-2026-SENT01', async (route) => {
       if (route.request().method() === 'PATCH') {
         const body = route.request().postDataJSON();
-        mockCases[0] = { ...mockCases[0], status: body.status || 'Pending' };
+        const nextStatus = body.status || mockCases[0].status;
+        mockCases[0] = {
+          ...mockCases[0],
+          status: nextStatus,
+          completedAt: nextStatus === 'Completed' ? '2026-11-19T12:00:00.000Z' : null,
+        };
+        const counts = {
+          All: mockCases.length,
+          New: mockCases.filter((c) => c.status === 'New').length,
+          Pending: mockCases.filter((c) => c.status === 'Pending').length,
+          'Follow Up': mockCases.filter((c) => c.status === 'Follow Up').length,
+          Completed: mockCases.filter((c) => c.status === 'Completed').length,
+        };
+        mockAnalytics.kpis.newRequests = counts.New;
+        mockAnalytics.kpis.pendingRequests = counts.Pending;
+        mockAnalytics.kpis.followUpRequests = counts['Follow Up'];
+        mockAnalytics.kpis.completedRequests = counts.Completed;
+        mockAnalytics.kpis.completionRate = counts.Completed === 1 ? 50 : 0;
         await route.fulfill({
           status: 200,
           contentType: 'application/json',
@@ -591,6 +608,26 @@ test.describe('Pio Languisan Portfolio Platform E2E', () => {
       });
     });
 
+    await page.route('**/api/admin/users*', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          users: [
+            {
+              id: 'user-super-1',
+              email: 'admin@piolanguisan.example',
+              name: 'Pio Languisan',
+              role: 'super_admin',
+              isActive: true,
+              mfaEnabled: false,
+              createdAt: '2026-11-18T00:00:00.000Z',
+            },
+          ],
+        }),
+      });
+    });
+
     await page.route('**/api/assistant/scope', async (route) => {
       await route.fulfill({
         status: 200,
@@ -664,7 +701,7 @@ test.describe('Pio Languisan Portfolio Platform E2E', () => {
     await expect(page.locator('#consult-phone')).toHaveValue('+63 917 123 4567');
     await expect(countryBtn).toContainText('Philippines (+63)');
 
-    // Retry sends identical submissionKey and normalized E.164 phone, displaying case reference & tracking ID
+    // Retry sends identical submissionKey and normalized E.164 phone, displaying case reference & tracking ID (Scenario 1)
     await page.getByRole('button', { name: 'Submit Consultation Request' }).click();
     await expect(page.getByText('CASE-000001')).toBeVisible();
     await expect(page.getByText('INQ-2026-TEST1234')).toBeVisible();
@@ -717,7 +754,7 @@ test.describe('Pio Languisan Portfolio Platform E2E', () => {
     await page.getByRole('button', { name: 'Back to Admin Sign In' }).click();
     await expect(page).toHaveURL(/\/admin\/login$/);
 
-    // Unauthenticated protected route attempt (?p=/admin/cases) redirects cleanly to /admin/login?redirect=...
+    // Unauthenticated protected route attempt (?p=/admin/cases) redirects cleanly to /admin/login?redirect=... (Scenario 7 & 8)
     await page.goto('./?p=%2Fadmin%2Fcases', { waitUntil: 'networkidle' });
     await expect(page).toHaveURL(/\/admin\/login\?redirect=%2Fadmin%2Fcases$/);
 
@@ -727,7 +764,7 @@ test.describe('Pio Languisan Portfolio Platform E2E', () => {
     await page.getByRole('button', { name: 'Secure Sign In' }).click();
     await expect(page.getByRole('alert')).toContainText('Invalid email or password.');
 
-    // Check Remember email & sign in cleanly -> redirects back to /admin/cases (requested protected route)
+    // Check Remember email & sign in cleanly -> redirects back to /admin/cases (Scenario 2)
     await page.getByLabel('Remember email').check();
     await page.locator('#admin-login-password').fill('SuperValidPassword!2026');
     await page.getByRole('button', { name: 'Secure Sign In' }).click();
@@ -739,13 +776,21 @@ test.describe('Pio Languisan Portfolio Platform E2E', () => {
     expect(JSON.stringify(storageDump)).not.toContain('SuperValidPassword!2026');
     expect(JSON.stringify(storageDump)).not.toContain('e2e-admin-token');
 
-    // Navigate to Overview KPIs
+    // Navigate to Overview KPIs & verify architectural header, 6-stage lifecycle, and charts (Scenario 2)
     await page.getByRole('button', { name: 'Overview' }).click();
     await expect(page).toHaveURL(/\/admin\/dashboard$/);
+    await expect(page.getByText('Consultation Request Management Dashboard')).toBeVisible();
     await expect(page.getByText('Total Requests')).toBeVisible();
     await expect(page.getByText('Completion Rate')).toBeVisible();
+    await expect(page.getByLabel('Consultation Request Lifecycle')).toBeVisible();
+    await expect(page.getByRole('progressbar', { name: 'Overall case completion progress' })).toBeVisible();
 
-    // Navigate to All Cases and change status
+    // Verify Header profile dropdown opens cleanly on desktop
+    await page.getByRole('button', { name: /Pio Languisan/ }).click();
+    await expect(page.getByRole('menu', { name: 'Administrator profile menu' })).toBeVisible();
+    await page.keyboard.press('Escape');
+
+    // Navigate to All Cases and change status to Pending (Scenario 3)
     await page.getByRole('button', { name: /All Cases/ }).click();
     await expect(page).toHaveURL(/\/admin\/cases$/);
     await page
@@ -753,7 +798,7 @@ test.describe('Pio Languisan Portfolio Platform E2E', () => {
       .selectOption('Pending');
     await expect(page.getByText('Updated CASE-000001 status to Pending.')).toBeVisible();
 
-    // Open Case Detail page -> tel: link, Gmail status, and add internal note
+    // Open Case Detail page -> tel: link, Gmail status, internal note, Follow Up (Scenario 4), & Completed + Reopen validation (Scenario 5)
     await page.getByRole('button', { name: 'CASE-000001' }).first().click();
     await expect(page).toHaveURL(/\/admin\/cases\/INQ-2026-SENT01$/);
     const telLink = page.getByRole('link', { name: '+639171234567' });
@@ -765,7 +810,34 @@ test.describe('Pio Languisan Portfolio Platform E2E', () => {
     await page.getByRole('button', { name: 'Add Internal Note' }).click();
     await expect(page.getByText('Internal note recorded.')).toBeVisible();
 
-    // Navigate to Service Domain Analytics and Target Timelines
+    // Change to Follow Up via status selector -> check Follow Up queue (Scenario 4)
+    await page.locator('#detail-status').selectOption('Follow Up');
+    await page.getByRole('button', { name: 'Update Status' }).click();
+    await expect(page.getByText(/Updated CASE-000001 status to Follow Up/)).toBeVisible();
+    await page.getByRole('navigation', { name: 'Admin Navigation' }).getByRole('button', { name: /Follow Up/ }).click();
+    await expect(page).toHaveURL(/\/admin\/cases\?status=Follow(\+|%20)Up$/);
+
+    // Return to detail and mark Completed -> check Overview Completion Rate updates to 50% (Scenario 5)
+    await page.getByRole('button', { name: 'CASE-000001' }).first().click();
+    await page.locator('#detail-status').selectOption('Completed');
+    await page.getByRole('button', { name: 'Update Status' }).click();
+    await expect(page.getByText('Completed At')).toBeVisible();
+
+    // Attempting to reopen Completed case without >=5 char reason triggers client alert
+    await page.locator('#detail-status').selectOption('Pending');
+    await page.locator('#detail-status-note').fill('no');
+    await page.getByRole('button', { name: 'Reopen Case & Update Status' }).click();
+    await expect(page.getByText(/requires an audit transition note of at least 5 characters/)).toBeVisible();
+
+    await page.getByRole('navigation', { name: 'Admin Navigation' }).getByRole('button', { name: 'Overview' }).click();
+    await expect(page.getByRole('button', { name: /Completion Rate 50%/ })).toBeVisible();
+    await expect(page.getByText('Overall Completion: 50%')).toBeVisible();
+
+    // Navigate to Users & Access, Service Domain Analytics, and Target Timelines
+    await page.getByRole('navigation', { name: 'Admin Navigation' }).getByRole('button', { name: 'Users & Access' }).click();
+    await expect(page).toHaveURL(/\/admin\/users$/);
+    await expect(page.getByRole('heading', { name: 'Team Accounts & Role-Based Access' })).toBeVisible();
+
     await page.getByRole('button', { name: 'Service Domain Analytics' }).click();
     await expect(page).toHaveURL(/\/admin\/analytics$/);
     await expect(page.getByText('Service Domain × Status Matrix')).toBeVisible();
@@ -773,7 +845,14 @@ test.describe('Pio Languisan Portfolio Platform E2E', () => {
     await expect(page).toHaveURL(/\/admin\/analytics\?tab=timelines$/);
     await expect(page.getByText('Target Timeline × Status Matrix')).toBeVisible();
 
-    // Verify Admin Dashboard mobile responsive drawer & zero horizontal overflow at 390x844
+    // Verify Admin Dashboard tablet responsive layout (768x1024, Scenario 10)
+    await page.setViewportSize({ width: 768, height: 1024 });
+    const tabletOverflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth
+    );
+    expect(tabletOverflow).toBeLessThanOrEqual(1);
+
+    // Verify Admin Dashboard mobile responsive drawer & zero horizontal overflow at 390x844 (Scenario 10)
     await page.setViewportSize({ width: 390, height: 844 });
     const adminOverflow = await page.evaluate(
       () => document.documentElement.scrollWidth - document.documentElement.clientWidth
@@ -797,6 +876,137 @@ test.describe('Pio Languisan Portfolio Platform E2E', () => {
     await expect(page).toHaveURL(/\/admin\/login/);
     await expect(page.getByText('Total Requests')).toHaveCount(0);
   });
+
+  test('enforces Staff RBAC restrictions on analytics, exports, and user management routes (Scenario 6)', async ({
+    page,
+  }) => {
+    await page.route('**/api/content', (route) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({}) })
+    );
+    await page.route('**/api/auth/status', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          hasAdminUsers: true,
+          bootstrapConfigured: true,
+          passcodeConfigured: false,
+          storageMode: 'postgres',
+          mailerConfigured: false,
+        }),
+      })
+    );
+    await page.route('**/api/auth/me', (route) =>
+      route.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ error: 'Unauthorized' }) })
+    );
+    await page.route('**/api/auth/login', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          token: 'e2e-staff-token',
+          expiresInMs: 3600000,
+          user: {
+            id: 'staff-1',
+            email: 'staff@piolanguisan.example',
+            name: 'Operations Coordinator',
+            role: 'staff',
+            mfaEnabled: false,
+          },
+        }),
+      })
+    );
+    await page.route('**/api/admin/dashboard', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          inquiries: [],
+          cases: [],
+          projects: [],
+          users: [],
+          unreadNotifications: 0,
+          analytics: null,
+          brand: { customPortraitDataUrl: null, customLogoDataUrl: null, motionEnabled: true, motionSensitivity: 1 },
+        }),
+      })
+    );
+    await page.route('**/api/admin/cases?*', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          items: [],
+          total: 0,
+          page: 1,
+          pageSize: 15,
+          totalPages: 1,
+          statusCounts: { All: 0, New: 0, Pending: 0, 'Follow Up': 0, Completed: 0 },
+        }),
+      })
+    );
+    await page.route('**/api/admin/analytics*', (route) =>
+      route.fulfill({
+        status: 403,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: 'Forbidden: requires Admin or Super Admin role.' }),
+      })
+    );
+    await page.route('**/api/admin/notifications*', (route) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ notifications: [], unreadCount: 0 }) })
+    );
+
+    await page.goto('./?p=%2Fadmin%2Fusers', { waitUntil: 'networkidle' });
+    await page.locator('#admin-login-email').fill('staff@piolanguisan.example');
+    await page.locator('#admin-login-password').fill('StaffStrongPassword!2026');
+    await page.getByRole('button', { name: 'Secure Sign In' }).click();
+
+    await expect(page.getByRole('heading', { name: 'Administrator Role Required' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Service Domain Analytics' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Users & Access' })).toHaveCount(0);
+  });
+
+  test('displays explicit errors without false success when backend API is unavailable (Scenario 9)', async ({
+    page,
+  }) => {
+    await page.route('**/api/content', (route) =>
+      route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'Service unavailable' }) })
+    );
+    await page.route('**/api/inquiries', (route) =>
+      route.fulfill({
+        status: 503,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: 'Consultation service temporarily unavailable.' }),
+      })
+    );
+    await page.route('**/api/auth/status', (route) =>
+      route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'Database unavailable' }) })
+    );
+    await page.route('**/api/auth/login', (route) =>
+      route.fulfill({
+        status: 503,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: 'Authentication backend unavailable.' }),
+      })
+    );
+
+    await page.goto('./', { waitUntil: 'networkidle' });
+    await page.locator('#consult-name').fill('Alex Rivera');
+    await page.locator('#consult-email').fill('alex@example.com');
+    await page.locator('#consult-message').fill('Need operations advisory help.');
+    await page.getByRole('button', { name: 'Submit Consultation Request' }).click();
+
+    await expect(page.getByRole('alert')).toContainText('temporarily unavailable');
+    await expect(page.getByText('Consultation Request Confirmed')).toHaveCount(0);
+
+    await page.getByRole('link', { name: 'Admin Console' }).click();
+    await page.locator('#admin-login-email').fill('admin@piolanguisan.example');
+    await page.locator('#admin-login-password').fill('SuperValidPassword!2026');
+    await page.getByRole('button', { name: 'Secure Sign In' }).click();
+    await expect(page.getByRole('alert')).toContainText('Authentication backend unavailable');
+    await expect(page).toHaveURL(/\/admin\/login$/);
+  });
+
 
   for (const vp of VIEWPORTS) {
     test(`has no horizontal overflow at ${vp.name} (${vp.width}x${vp.height})`, async ({ page }) => {

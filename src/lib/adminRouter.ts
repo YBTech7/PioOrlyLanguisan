@@ -11,6 +11,7 @@ export type AdminNavId =
   | 'target-timelines'
   | 'reports'
   | 'notifications'
+  | 'users'
   | 'activity'
   | 'settings';
 
@@ -203,6 +204,10 @@ export function parseLocationRoute(
     return { kind: 'admin', appPath, nav: 'notifications', caseId: null };
   }
 
+  if (subPath === '/admin/users') {
+    return { kind: 'admin', appPath, nav: 'users', caseId: null };
+  }
+
   if (subPath === '/admin/activity') {
     return { kind: 'admin', appPath, nav: 'activity', caseId: null };
   }
@@ -241,6 +246,8 @@ export function adminNavToPath(nav: AdminNavId, caseId?: string | null): string 
       return '/admin/reports';
     case 'notifications':
       return '/admin/notifications';
+    case 'users':
+      return '/admin/users';
     case 'activity':
       return '/admin/activity';
     case 'settings':

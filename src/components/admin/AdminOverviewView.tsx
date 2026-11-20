@@ -195,6 +195,55 @@ export const AdminOverviewView: React.FC<AdminOverviewViewProps> = ({
         ))}
       </section>
 
+      {/* 6-Stage Consultation Workflow Pipeline */}
+      <section
+        aria-label="Consultation Request Lifecycle"
+        className="rounded-xl border border-[#D1A953]/20 bg-[#0C2935] p-5"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#D1A953]/15 pb-3">
+          <div>
+            <h3 className="font-editorial text-base font-semibold text-[#F5F2EB]">
+              Consultation Request Workflow
+            </h3>
+            <p className="text-xs text-[#C2D0D6]">
+              End-to-end case lifecycle from public intake through completion
+            </p>
+          </div>
+          <span className="font-mono text-xs tabular-nums text-[#DFC585]">
+            Overall Completion: {kpis.completionRate}%
+          </span>
+        </div>
+
+        <ol className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+          {[
+            { step: '01', title: 'Request Submitted', count: kpis.totalRequests, nav: 'All' as const },
+            { step: '02', title: 'Case Created', count: kpis.totalRequests, nav: 'All' as const },
+            { step: '03', title: 'Initial Status: New', count: kpis.newRequests, nav: 'New' as const },
+            { step: '04', title: 'Administrator Review', count: kpis.pendingRequests, nav: 'Pending' as const },
+            { step: '05', title: 'Status Update', count: kpis.followUpRequests, nav: 'Follow Up' as const },
+            { step: '06', title: 'Case Completion', count: kpis.completedRequests, nav: 'Completed' as const },
+          ].map((stage) => (
+            <li key={stage.step}>
+              <button
+                type="button"
+                onClick={() => onNavigateStatus(stage.nav)}
+                className="flex h-full w-full flex-col justify-between rounded-lg border border-[#D1A953]/18 bg-[#061823]/75 p-3 text-left transition-colors hover:border-[#D1A953]/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#D1A953]"
+              >
+                <span className="font-mono text-[11px] tabular-nums text-[#DFC585]">
+                  Stage {stage.step}
+                </span>
+                <span className="mt-1 text-xs font-medium text-[#F5F2EB] leading-snug">
+                  {stage.title}
+                </span>
+                <span className="mt-2 font-mono text-lg font-semibold tabular-nums text-[#DFC585]">
+                  {stage.count}
+                </span>
+              </button>
+            </li>
+          ))}
+        </ol>
+      </section>
+
       {/* Two-column Analytics Snapshot + Recent Cases */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
         <div className="lg:col-span-6 rounded-xl border border-[#D1A953]/20 bg-[#0C2935] p-5 sm:p-6">
@@ -284,6 +333,87 @@ export const AdminOverviewView: React.FC<AdminOverviewViewProps> = ({
               ))}
             </div>
           )}
+        </div>
+      </div>
+
+      {/* Target Timeline Distribution & Overall Case Completion Progress */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+        <div className="lg:col-span-7 rounded-xl border border-[#D1A953]/20 bg-[#0C2935] p-5 sm:p-6">
+          <div className="border-b border-[#D1A953]/15 pb-3">
+            <h3 className="font-editorial text-lg font-semibold text-[#F5F2EB]">
+              Target Timeline Distribution
+            </h3>
+            <p className="mt-0.5 text-xs text-[#C2D0D6]">
+              Breakdown across exact target timelines submitted on consultation intake
+            </p>
+          </div>
+          <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
+            {analytics.byTimeline.map((row) => (
+              <div
+                key={row.key}
+                className="rounded-lg border border-[#D1A953]/15 bg-[#061823]/65 p-3.5 space-y-2"
+              >
+                <div className="flex items-center justify-between gap-2 text-xs">
+                  <span className="font-medium text-[#F5F2EB]">{row.label}</span>
+                  <span className="font-mono tabular-nums text-[#DFC585]">
+                    {row.count} ({row.percentage}%)
+                  </span>
+                </div>
+                <div className="h-2 w-full overflow-hidden rounded-full bg-[#061823]">
+                  <div
+                    className="h-full rounded-full bg-[#D1A953]"
+                    style={{ width: row.count === 0 ? '0%' : `${Math.max(5, row.percentage)}%` }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="lg:col-span-5 rounded-xl border border-[#D1A953]/20 bg-[#0C2935] p-5 sm:p-6 flex flex-col justify-between space-y-4">
+          <div className="border-b border-[#D1A953]/15 pb-3">
+            <h3 className="font-editorial text-lg font-semibold text-[#F5F2EB]">
+              Overall Case Resolution Progress
+            </h3>
+            <p className="mt-0.5 text-xs text-[#C2D0D6]">
+              Proportion of recorded consultation requests reaching Completed status
+            </p>
+          </div>
+
+          <div className="space-y-3">
+            <div className="flex items-baseline justify-between">
+              <span className="font-mono text-3xl font-semibold tabular-nums text-[#DFC585]">
+                {kpis.completionRate}%
+              </span>
+              <span className="font-mono text-xs tabular-nums text-[#C2D0D6]">
+                {kpis.completedRequests} of {kpis.totalRequests} completed
+              </span>
+            </div>
+            <div
+              role="progressbar"
+              aria-valuenow={Math.round(kpis.completionRate)}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-label="Overall case completion progress"
+              className="h-3 w-full overflow-hidden rounded-full bg-[#061823]"
+            >
+              <div
+                className="h-full rounded-full bg-[#D1A953] transition-all duration-300"
+                style={{ width: `${Math.min(100, Math.max(0, kpis.completionRate))}%` }}
+              />
+            </div>
+          </div>
+
+          <dl className="grid grid-cols-2 gap-3 border-t border-[#D1A953]/15 pt-3 text-xs">
+            {analytics.byStatus.map((s) => (
+              <div key={s.key} className="flex items-center justify-between gap-2">
+                <dt className="text-[#C2D0D6]">{s.label}</dt>
+                <dd className="font-mono tabular-nums text-[#F5F2EB]">
+                  {s.count} ({s.percentage}%)
+                </dd>
+              </div>
+            ))}
+          </dl>
         </div>
       </div>
     </div>

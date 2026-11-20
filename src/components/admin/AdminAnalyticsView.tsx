@@ -11,7 +11,7 @@ const MatrixTable: React.FC<{ title: string; subtitle: string; rows: MatrixRow[]
   subtitle,
   rows,
 }) => (
-  <div className="rounded-xl border border-[#D1A953]/20 bg-[#0C2935] p-5 sm:p-6">
+  <div className="min-w-0 overflow-hidden rounded-xl border border-[#D1A953]/20 bg-[#0C2935] p-5 sm:p-6">
     <div className="border-b border-[#D1A953]/15 pb-3">
       <h3 className="font-editorial text-lg font-semibold text-[#F5F2EB]">{title}</h3>
       <p className="mt-0.5 text-xs text-[#C2D0D6]">{subtitle}</p>
@@ -71,7 +71,7 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({ mode, an
     <div className="space-y-6">
       {mode === 'domains' ? (
         <>
-          <div className="rounded-xl border border-[#D1A953]/20 bg-[#0C2935] p-5 sm:p-6">
+          <div className="relative overflow-hidden rounded-xl border border-[#D1A953]/20 bg-[#0C2935] p-5 sm:p-6">
             <div className="border-b border-[#D1A953]/15 pb-3">
               <h3 className="font-editorial text-lg font-semibold text-[#F5F2EB]">
                 Request Quantity by Primary Service Domain
@@ -105,6 +105,28 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({ mode, an
                 </div>
               ))}
             </div>
+
+            <div className="sr-only">
+              <table>
+                <caption>Request quantity by Primary Service Domain</caption>
+                <thead>
+                  <tr>
+                    <th>Service Domain</th>
+                    <th>Count</th>
+                    <th>Percentage</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {analytics.byServiceDomain.map((row) => (
+                    <tr key={row.key}>
+                      <td>{row.label}</td>
+                      <td>{row.count}</td>
+                      <td>{row.percentage}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
 
           <MatrixTable
@@ -115,7 +137,7 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({ mode, an
         </>
       ) : (
         <>
-          <div className="rounded-xl border border-[#D1A953]/20 bg-[#0C2935] p-5 sm:p-6">
+          <div className="relative overflow-hidden rounded-xl border border-[#D1A953]/20 bg-[#0C2935] p-5 sm:p-6">
             <div className="border-b border-[#D1A953]/15 pb-3">
               <h3 className="font-editorial text-lg font-semibold text-[#F5F2EB]">
                 Requests by Target Timeline
@@ -154,6 +176,32 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({ mode, an
                   </div>
                 </div>
               ))}
+            </div>
+
+            <div className="sr-only">
+              <table>
+                <caption>Requests by Target Timeline</caption>
+                <thead>
+                  <tr>
+                    <th>Target Timeline</th>
+                    <th>Count</th>
+                    <th>Percentage</th>
+                    <th>Overdue</th>
+                    <th>Due Soon</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {analytics.byTimeline.map((row) => (
+                    <tr key={row.key}>
+                      <td>{row.label}</td>
+                      <td>{row.count}</td>
+                      <td>{row.percentage}%</td>
+                      <td>{row.overdueCount ?? 0}</td>
+                      <td>{row.dueSoonCount ?? 0}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
 

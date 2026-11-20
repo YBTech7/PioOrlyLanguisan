@@ -41,7 +41,8 @@ export const AdminNotificationsView: React.FC<{
       <div>
         <h3 className="font-editorial text-lg font-semibold text-[#F5F2EB]">Notifications</h3>
         <p className="text-xs text-[#C2D0D6]">
-          Real-time alerts for newly persisted consultation cases and assignments
+          Synchronized alerts (auto-refreshes every 60s and on manual refresh) for consultation
+          cases, assignments, status changes, and upcoming or overdue deadlines
         </p>
       </div>
       <button
@@ -238,6 +239,7 @@ export const AdminActivityView: React.FC<{
 };
 
 export const AdminSettingsView: React.FC<{
+  viewMode?: 'users' | 'settings';
   currentUserId: string | null;
   userRole: AdminRole;
   mfaEnabled: boolean;
@@ -277,6 +279,7 @@ export const AdminSettingsView: React.FC<{
   onUploadLogo: (file: File | undefined) => void;
   onResetLogo: () => Promise<void>;
 }> = ({
+  viewMode = 'settings',
   currentUserId,
   userRole,
   mfaEnabled,
@@ -324,8 +327,13 @@ export const AdminSettingsView: React.FC<{
   const [newMetricLabel, setNewMetricLabel] = useState('Operational throughput improvement');
   const [newSummary, setNewSummary] = useState('');
 
+  const [confirmRevokeId, setConfirmRevokeId] = useState<string | null>(null);
+  const [confirmUserToggleId, setConfirmUserToggleId] = useState<string | null>(null);
+
   const isSuperAdmin = userRole === 'super_admin';
   const isAdminOrSuper = userRole === 'super_admin' || userRole === 'admin';
+  const showSettingsSections = viewMode === 'settings';
+  const showUsersSection = viewMode === 'users' || viewMode === 'settings';
 
   const handlePasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -399,32 +407,34 @@ export const AdminSettingsView: React.FC<{
   return (
     <div className="space-y-6">
       {/* System Configuration Status */}
-      <div className="rounded-xl border border-[#D1A953]/20 bg-[#0C2935] p-5 sm:p-6">
-        <h3 className="font-editorial text-lg font-semibold text-[#F5F2EB] border-b border-[#D1A953]/15 pb-3">
-          Storage &amp; Notification Integrations
-        </h3>
-        <dl className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 text-xs">
-          <div>
-            <dt className="text-[#DFC585]">Case &amp; Auth Persistence Engine</dt>
-            <dd className="mt-1 font-mono text-[#F5F2EB]">
-              {storageMode === 'postgres'
-                ? 'PostgreSQL Relational Database'
-                : 'Transactional File/Memory Store'}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-[#DFC585]">External Gmail Mailer (Cases &amp; Recovery)</dt>
-            <dd className="mt-1 font-mono text-[#F5F2EB]">
-              {mailerConfigured
-                ? 'Configured (Active for Case Alerts & Recovery Links)'
-                : 'Not Configured (In-App Notifications Active)'}
-            </dd>
-          </div>
-        </dl>
-      </div>
+      {showSettingsSections && (
+        <div className="rounded-xl border border-[#D1A953]/20 bg-[#0C2935] p-5 sm:p-6">
+          <h3 className="font-editorial text-lg font-semibold text-[#F5F2EB] border-b border-[#D1A953]/15 pb-3">
+            Storage &amp; Notification Integrations
+          </h3>
+          <dl className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 text-xs">
+            <div>
+              <dt className="text-[#DFC585]">Case &amp; Auth Persistence Engine</dt>
+              <dd className="mt-1 font-mono text-[#F5F2EB]">
+                {storageMode === 'postgres'
+                  ? 'PostgreSQL Relational Database'
+                  : 'Transactional File/Memory Store'}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-[#DFC585]">External Gmail Mailer (Cases &amp; Recovery)</dt>
+              <dd className="mt-1 font-mono text-[#F5F2EB]">
+                {mailerConfigured
+                  ? 'Configured (Active for Case Alerts & Recovery Links)'
+                  : 'Not Configured (In-App Notifications Active)'}
+              </dd>
+            </div>
+          </dl>
+        </div>
+      )}
 
       {/* Account Password & Multi-Factor Authentication */}
-      {currentUserId && (
+      {showSettingsSections && currentUserId && (
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
           <form
             onSubmit={handlePasswordSubmit}
@@ -606,13 +616,35 @@ export const AdminSettingsView: React.FC<{
                   </p>
                 </div>
                 {!sess.revokedAt && !sess.isCurrent && (
-                  <button
-                    type="button"
-                    onClick={() => onRevokeSession(sess.id)}
-                    className="rounded-lg border border-[#D1A953]/25 bg-[#061823] px-3 py-1.5 text-xs text-[#F5F2EB] hover:border-amber-400/50 hover:text-amber-200"
-                  >
-                    Revoke Session
-                  </button>
+                  confirmRevokeId === sess.id ? (
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          await onRevokeSession(sess.id);
+                          setConfirmRevokeId(null);
+                        }}
+                        className="rounded-lg bg-amber-400 px-3 py-1.5 text-xs font-semibold text-[#061823]"
+                      >
+                        Confirm Revoke
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmRevokeId(null)}
+                        className="rounded-lg border border-[#D1A953]/25 px-2.5 py-1.5 text-xs text-[#C2D0D6]"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setConfirmRevokeId(sess.id)}
+                      className="rounded-lg border border-[#D1A953]/25 bg-[#061823] px-3 py-1.5 text-xs text-[#F5F2EB] hover:border-amber-400/50 hover:text-amber-200"
+                    >
+                      Revoke Session
+                    </button>
+                  )
                 )}
               </div>
             ))}
@@ -621,7 +653,7 @@ export const AdminSettingsView: React.FC<{
       </div>
 
       {/* Team Access Control (RBAC) */}
-      {isAdminOrSuper && (
+      {showUsersSection && isAdminOrSuper && (
         <div className="rounded-xl border border-[#D1A953]/20 bg-[#0C2935] p-5 sm:p-6 space-y-5">
           <div className="border-b border-[#D1A953]/15 pb-3">
             <h3 className="font-editorial text-lg font-semibold text-[#F5F2EB]">
@@ -801,13 +833,45 @@ export const AdminSettingsView: React.FC<{
                         <option value="admin">Admin</option>
                         <option value="super_admin">Super Admin</option>
                       </select>
-                      <button
-                        type="button"
-                        onClick={() => onUpdateUser(u.id, { isActive: !u.isActive })}
-                        className="rounded-lg border border-[#D1A953]/25 bg-[#061823] px-3 py-1.5 text-xs text-[#F5F2EB]"
-                      >
-                        {u.isActive ? 'Active (Disable)' : 'Disabled (Enable)'}
-                      </button>
+                      {u.isActive ? (
+                        confirmUserToggleId === u.id ? (
+                          <>
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                await onUpdateUser(u.id, { isActive: false });
+                                setConfirmUserToggleId(null);
+                              }}
+                              className="rounded-lg bg-amber-400 px-3 py-1.5 text-xs font-semibold text-[#061823]"
+                            >
+                              Confirm Disable
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setConfirmUserToggleId(null)}
+                              className="rounded-lg border border-[#D1A953]/25 px-2.5 py-1.5 text-xs text-[#C2D0D6]"
+                            >
+                              Cancel
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setConfirmUserToggleId(u.id)}
+                            className="rounded-lg border border-[#D1A953]/25 bg-[#061823] px-3 py-1.5 text-xs text-[#F5F2EB] hover:border-amber-400/50 hover:text-amber-200"
+                          >
+                            Active (Disable)
+                          </button>
+                        )
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => onUpdateUser(u.id, { isActive: true })}
+                          className="rounded-lg border border-[#D1A953]/25 bg-[#061823] px-3 py-1.5 text-xs text-[#DFC585]"
+                        >
+                          Disabled (Enable)
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>
@@ -818,7 +882,7 @@ export const AdminSettingsView: React.FC<{
       )}
 
       {/* Portfolio Case Studies & Brand Assets (Super Admin Only) */}
-      {isSuperAdmin && (
+      {showSettingsSections && isSuperAdmin && (
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
           <div className="lg:col-span-7 rounded-xl border border-[#D1A953]/20 bg-[#0C2935] p-5 sm:p-6 space-y-4">
             <h3 className="font-editorial text-lg font-semibold text-[#F5F2EB] border-b border-[#D1A953]/15 pb-3">

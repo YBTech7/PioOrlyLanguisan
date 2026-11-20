@@ -94,4 +94,106 @@ describe('Case Analytics & CSV Export', () => {
     expect(csv).toContain('"Target Timeline Distribution"');
     expect(csv).toContain('"Monthly Request Trends"');
   });
+
+  it('handles division by zero safely when there are zero cases in scope', () => {
+    const analytics = computeDashboardAnalytics([], {
+      nowMs: Date.parse('2026-11-19T12:00:00.000Z'),
+    });
+
+    expect(analytics.kpis).toEqual({
+      totalRequests: 0,
+      newRequests: 0,
+      pendingRequests: 0,
+      followUpRequests: 0,
+      completedRequests: 0,
+      overdueCases: 0,
+      dueSoonCases: 0,
+      completionRate: 0,
+    });
+    expect(analytics.byStatus.every((row) => row.count === 0 && row.percentage === 0)).toBe(true);
+    expect(analytics.byServiceDomain).toHaveLength(6);
+    expect(analytics.byServiceDomain.every((row) => row.count === 0 && row.percentage === 0)).toBe(true);
+    expect(analytics.byTimeline).toHaveLength(4);
+    expect(analytics.byTimeline.every((row) => row.count === 0 && row.percentage === 0)).toBe(true);
+    expect(analytics.serviceDomainMatrix.every((row) => row.completionRate === 0)).toBe(true);
+  });
+
+  it('enforces exact 48-hour Due Soon and Overdue boundaries', () => {
+    const nowMs = Date.parse('2026-11-19T12:00:00.000Z');
+    const overdueBy1Ms = makeCase({ id: 'o1', deadlineAt: '2026-11-19T11:59:59.999Z' });
+    const dueNow = makeCase({ id: 'd1', deadlineAt: '2026-11-19T12:00:00.000Z' });
+    const dueExact48h = makeCase({ id: 'd2', deadlineAt: '2026-11-21T12:00:00.000Z' });
+    const beyond48h = makeCase({ id: 'd3', deadlineAt: '2026-11-21T12:00:00.001Z' });
+    const completedPastDeadline = makeCase({
+      id: 'c1',
+      status: 'Completed',
+      deadlineAt: '2026-11-01T00:00:00.000Z',
+      followUpAt: '2026-11-02T00:00:00.000Z',
+    });
+
+    expect(isCaseOverdue(overdueBy1Ms, nowMs)).toBe(true);
+    expect(isCaseDueSoon(overdueBy1Ms, nowMs)).toBe(false);
+
+    expect(isCaseOverdue(dueNow, nowMs)).toBe(false);
+    expect(isCaseDueSoon(dueNow, nowMs)).toBe(true);
+
+    expect(isCaseOverdue(dueExact48h, nowMs)).toBe(false);
+    expect(isCaseDueSoon(dueExact48h, nowMs)).toBe(true);
+
+    expect(isCaseOverdue(beyond48h, nowMs)).toBe(false);
+    expect(isCaseDueSoon(beyond48h, nowMs)).toBe(false);
+
+    expect(isCaseOverdue(completedPastDeadline, nowMs)).toBe(false);
+    expect(isCaseDueSoon(completedPastDeadline, nowMs)).toBe(false);
+  });
+
+  it('applies inclusive UTC date boundaries, previous-period comparison, and completedAt trend bucketing', () => {
+    const records: CaseRecord[] = [
+      makeCase({
+        id: 'prev-1',
+        createdAt: '2026-11-05T12:00:00.000Z',
+        status: 'Completed',
+        completedAt: '2026-11-06T09:00:00.000Z',
+      }),
+      makeCase({
+        id: 'cur-start',
+        createdAt: '2026-11-10T00:00:00.000Z',
+        status: 'New',
+      }),
+      makeCase({
+        id: 'cur-end',
+        createdAt: '2026-11-19T23:59:59.999Z',
+        status: 'Completed',
+        completedAt: '2026-10-25T15:00:00.000Z',
+        updatedAt: '2026-12-02T15:00:00.000Z',
+      }),
+      makeCase({
+        id: 'out-after',
+        createdAt: '2026-11-20T00:00:00.000Z',
+        status: 'Pending',
+      }),
+    ];
+
+    const analytics = computeDashboardAnalytics(records, {
+      fromIso: '2026-11-10T00:00:00.000Z',
+      toIso: '2026-11-19T23:59:59.999Z',
+      comparePrevious: true,
+      nowMs: Date.parse('2026-11-19T12:00:00.000Z'),
+    });
+
+    expect(analytics.kpis.totalRequests).toBe(2);
+    expect(analytics.kpis.newRequests).toBe(1);
+    expect(analytics.kpis.completedRequests).toBe(1);
+    expect(analytics.kpis.completionRate).toBe(50);
+
+    // Previous equal-length span (~10 days before Nov 10) captures prev-1
+    expect(analytics.previousKpis?.totalRequests).toBe(1);
+    expect(analytics.previousKpis?.completedRequests).toBe(1);
+
+    // cur-end completed bucket must use completedAt (2026-10), not updatedAt (2026-12)
+    expect(analytics.monthlyTrends.find((m) => m.month === '2026-10')?.completed).toBe(1);
+    expect(analytics.monthlyTrends.find((m) => m.month === '2026-12')).toBeUndefined();
+    expect(analytics.monthlyTrends.find((m) => m.month === '2026-11')?.submitted).toBe(2);
+  });
 });
+

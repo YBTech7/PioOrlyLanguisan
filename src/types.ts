@@ -146,6 +146,7 @@ export interface CaseRecord {
   createdAt: string;
   followUpAt: string | null;
   deadlineAt: string | null;
+  completedAt?: string | null;
   updatedAt: string;
   version: number;
   notes?: string;

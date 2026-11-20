@@ -1,0 +1,1276 @@
+# MASTER DEVELOPMENT DIRECTIVE
+## PIO LANGUISAN — CONSULTATION REQUEST MANAGEMENT SYSTEM
+### Full-Stack Remediation, Feature Completion, Supabase Integration, GitHub Source-of-Truth Enforcement, Security Hardening, and Production Readiness
+
+**ROLE AND AUTHORITY**
+
+Act as a coordinated senior engineering team consisting of:
+
+- Principal Software Architect
+- Senior React and TypeScript Developer
+- Backend Node.js and Express Engineer
+- PostgreSQL and Supabase Database Architect
+- Application Security and DevSecOps Engineer
+- UI/UX Design Engineer
+- Software Quality Assurance and Test Automation Engineer
+- Site Reliability and Deployment Engineer
+- Technical Documentation Specialist
+
+Your mission is to inspect, repair, complete, integrate, test, and prepare the existing Pio Languisan web application and Consultation Request Management Dashboard for production.
+
+This is an EXISTING APPLICATION DEVELOPMENT AND REMEDIATION PROJECT, not a new application creation project.
+
+Do not replace the existing website with a generic dashboard template.
+
+Do not discard working source code, user data, existing business logic, or established branding.
+
+Do not declare a feature completed without implementation evidence and appropriate verification.
+
+---
+
+# 1. PROJECT CONFIGURATION
+
+## 1.1 Official GitHub Repository
+
+Repository:
+
+https://github.com/YBTech7/PioOrlyLanguisan
+
+Default production branch:
+
+main
+
+GitHub must remain the authoritative source of truth for:
+
+- Application source code
+- Frontend components
+- Backend services
+- Database schema definitions
+- SQL migration history
+- Automated tests
+- Configuration templates
+- CI/CD workflows
+- Deployment definitions
+- Technical documentation
+
+All persistent source-code changes must be represented in GitHub commits.
+
+Use feature branches and pull requests for significant or security-sensitive changes.
+
+Do not make untracked production-only changes.
+
+## 1.2 Existing Supabase Project
+
+Project name:
+
+YBTech7's Project
+
+Project ID:
+
+wkyahxeqbndgmhoszagg
+
+Project URL:
+
+https://wkyahxeqbndgmhoszagg.supabase.co
+
+Use this existing project.
+
+Do not create another Supabase project.
+
+Do not create a second production database unless an explicitly approved migration strategy requires it.
+
+Do not embed secret API keys, database passwords, connection strings, or service-role credentials in source code, frontend bundles, screenshots, documentation, or AI prompts.
+
+All previously exposed Supabase secret keys must be treated as compromised until rotated.
+
+Store server-side credentials exclusively in approved backend environment or secret-management systems.
+
+## 1.3 Existing Website
+
+Public website:
+
+https://ybtech7.github.io/PioOrlyLanguisan/
+
+Administrative entry point:
+
+/admin/login
+
+Dashboard route:
+
+/admin/dashboard
+
+The public website must remain functional during development.
+
+The administrator dashboard must be protected by server-enforced authorization.
+
+GitHub Pages is a static hosting environment. Any database operations, authentication services, protected APIs, or server-side secrets must run in a suitable backend environment.
+
+Inspect the existing Railway or other backend deployment configuration before modifying it.
+
+## 1.4 Existing Technology Stack
+
+Preserve and validate the existing stack where practical:
+
+- React
+- TypeScript
+- Vite
+- Node.js
+- Express
+- PostgreSQL
+- Supabase
+- GitHub
+- GitHub Pages
+- External backend hosting
+- Existing CSS and component architecture
+
+Do not introduce an additional framework, ORM, database, authentication provider, or state-management library without documenting a justified need.
+
+---
+
+# 2. SOURCE CODE AUDIT FINDINGS — REQUIRED REMEDIATION
+
+The prior source-level audit identified these findings.
+
+Treat them as the starting point, then independently verify them against the current repository.
+
+## Finding A — Critical Database Schema Conflict
+
+The existing backend uses:
+
+db/migrations/001_case_management.sql
+
+db/migrations/002_admin_auth_security.sql
+
+The newer Supabase migration uses:
+
+supabase/migrations/20261120000000_create_case_management.sql
+
+The existing backend expects structures including:
+
+- users
+- cases
+- case_notes
+- case_status_history
+- notifications
+- admin_sessions
+- password_recovery_tokens
+- admin_invitations
+- auth_audit_events
+
+The newer Supabase schema defines structures including:
+
+- staff_profiles
+- consultation_cases
+- case_notes
+- case_status_history
+- case_notifications
+
+Some tables have overlapping names but incompatible column types and relationships.
+
+REQUIRED ACTION:
+
+1. Inspect all existing SQL migrations.
+2. Inspect the actual production database schema.
+3. Inspect the backend repository queries.
+4. Map every existing application entity to its database representation.
+5. Identify all conflicting names, column types, constraints, foreign keys, and indexes.
+6. Choose one canonical schema based on compatibility, data preservation, security, and maintainability.
+7. Prefer adapting the existing backend schema where this minimizes migration risk.
+8. Preserve existing records and historical data.
+9. Create versioned, forward-only migrations.
+10. Provide a rollback or recovery procedure.
+11. Verify all migration dependencies.
+12. Do not drop or rename production tables without an approved migration plan.
+13. Do not rely on CREATE TABLE IF NOT EXISTS to reconcile incompatible existing tables.
+14. Detect incompatible schemas explicitly and fail safely.
+15. Test the migrations against an isolated database before production application.
+
+DELIVERABLE:
+
+A single documented canonical database architecture that the backend and dashboard can actually use.
+
+## Finding B — Authentication Architecture Conflict
+
+The existing application implements custom administrator authentication.
+
+The new Supabase schema references Supabase Auth identities.
+
+REQUIRED ACTION:
+
+1. Audit the existing authentication implementation.
+2. Determine whether to retain and harden custom authentication or migrate to Supabase Auth.
+3. Document the decision and its security implications.
+4. Do not operate two independent administrator identity systems unintentionally.
+5. Do not silently migrate user accounts or passwords.
+6. Preserve existing administrator access during an approved migration.
+7. Verify login, logout, session expiration, recovery, and MFA.
+8. Require secure first-administrator provisioning.
+9. Prevent public users from creating privileged accounts.
+10. Require server-side role authorization for all protected actions.
+
+Do not expose administrator credentials to the browser bundle.
+
+## Finding C — Unverified Production Integration
+
+The existence of frontend and backend code does not prove that the live application works.
+
+REQUIRED ACTION:
+
+Verify:
+
+- GitHub Pages deployment
+- Frontend-to-backend API connectivity
+- Backend-to-Supabase connectivity
+- Database permissions
+- Authentication persistence
+- Consultation submission
+- Case creation
+- Status updates
+- Dashboard analytics
+- Notifications
+- Report generation
+
+Do not claim success based solely on successful compilation.
+
+---
+
+# 3. ARCHITECTURAL DESIGN IMPLEMENTATION
+
+Use the supplied Consultation Request Management Dashboard architectural image as the visual and functional reference.
+
+Preserve the existing Pio Languisan brand identity.
+
+## 3.1 Branding Requirements
+
+Primary visual theme:
+
+Midnight navy / deep teal with metallic gold accents.
+
+Design characteristics:
+
+- Premium corporate appearance
+- Elegant gold highlights
+- Clear typography
+- Consistent spacing
+- Rounded dashboard panels
+- Subtle glow effects
+- High-contrast data visualization
+- Responsive navigation
+- Accessible interactive elements
+- Professional administrator interface
+
+Preserve the existing brand logo and public website identity.
+
+Do not replace the design with unrelated colors or stock templates.
+
+Animations must be subtle and must respect reduced-motion preferences.
+
+Maintain WCAG 2.2 AA accessibility targets where applicable.
+
+## 3.2 Dashboard Layout
+
+Implement and verify the following regions:
+
+A. Top Header
+
+- Pio Languisan branding
+- Consultation Request Management Dashboard title
+- Current date
+- Notification indicator
+- Administrator profile
+- Role display
+- Profile dropdown
+- Secure logout
+
+B. Navigation Sidebar
+
+- Dashboard
+- All Cases
+- New Requests
+- Pending
+- Follow Up
+- Completed
+- Analytics
+- Reports
+- Notifications
+- Users & Access
+- Settings
+- Logout
+
+Display only authorized navigation items for each role.
+
+C. Dashboard Overview
+
+Include:
+
+- Date-range selector
+- Refresh control
+- Total Requests
+- New Requests
+- Pending Requests
+- Follow Up Requests
+- Completed Requests
+- Completion Rate
+- Due Soon
+- Overdue Cases
+
+D. Analytics Panels
+
+Include:
+
+- Requests by Primary Service Domain
+- Target Timeline Distribution
+- Overall Progress
+- Recent Consultation Cases
+
+E. Workflow Representation
+
+Preserve the six-stage workflow from the architectural design:
+
+1. Consultation Request Submitted
+2. Individual Case Created
+3. Initial Status: New
+4. Administrator Review
+5. Status Update
+6. Case Completion
+
+The dashboard should visually communicate this workflow without overwhelming the working interface.
+
+---
+
+# 4. CONSULTATION CASE MANAGEMENT
+
+## 4.1 Public Inquiry Intake
+
+Inspect the existing public consultation form.
+
+Verify that it captures and validates the appropriate fields, including:
+
+- Requester name
+- Email address
+- Contact information
+- Organization
+- Organization tier
+- Primary service domain
+- Target timeline
+- Project description
+- Submission timestamp
+
+Preserve the existing service-domain and timeline values unless an approved business-rule change is required.
+
+Apply server-side validation even when client-side validation already exists.
+
+Protect against:
+
+- Invalid input
+- Duplicate submissions
+- Automated spam
+- Oversized payloads
+- Injection attempts
+- Repeated form submission
+- Unauthorized data access
+
+## 4.2 Automatic Case Creation
+
+When a valid inquiry is received:
+
+1. Validate the request.
+2. Check the idempotency key.
+3. Create a unique case identifier.
+4. Assign initial status New.
+5. Record the submission timestamp.
+6. Store the selected service domain.
+7. Store the selected target timeline.
+8. Create an initial status-history event.
+9. Record the intake event in the activity log.
+10. Create an administrator notification.
+11. Return a tracking reference to the requester.
+12. Update dashboard data through the supported refresh mechanism.
+
+The database transaction must not create a partial case when an essential operation fails.
+
+Do not generate duplicate cases from repeated requests using the same idempotency key.
+
+Case numbers must be unique and safe under concurrent submissions.
+
+## 4.3 Case Status Rules
+
+Supported statuses:
+
+NEW
+
+PENDING
+
+FOLLOW UP
+
+COMPLETED
+
+Display labels must be:
+
+- New
+- Pending
+- Follow Up
+- Completed
+
+Initial status must always be New.
+
+Administrators may update status according to authorization rules.
+
+Every status change must record:
+
+- Case ID
+- Previous status
+- New status
+- Acting user
+- Timestamp
+- Optional explanation
+
+Prevent invalid status values.
+
+Define whether completed cases may be reopened and document the approved transition rules.
+
+## 4.4 Case Detail Page
+
+Provide:
+
+- Unique case number
+- Requester information
+- Service domain
+- Organization
+- Target timeline
+- Current status
+- Priority
+- Assigned staff member
+- Submission date
+- Target deadline
+- Follow-up schedule
+- Internal notes
+- Status history
+- Activity history
+- Authorized editing controls
+
+Do not expose internal notes or staff-only information to public users.
+
+## 4.5 Case Assignment
+
+Implement or verify:
+
+- Assignment to authorized active staff
+- Reassignment
+- Unassigned state
+- Assignment history
+- Notifications for new assignments
+- Staff-scoped access
+- Prevention of assignment to inactive users
+
+---
+
+# 5. DASHBOARD ANALYTICS
+
+All production dashboard metrics must be derived from persisted case records.
+
+Do not use the architectural image's sample numbers as real statistics.
+
+## 5.1 Required KPI Calculations
+
+Total Requests:
+
+Count of cases within the selected reporting scope.
+
+New Requests:
+
+Count of cases with status New.
+
+Pending Requests:
+
+Count of cases with status Pending.
+
+Follow Up Requests:
+
+Count of cases with status Follow Up.
+
+Completed Requests:
+
+Count of cases with status Completed.
+
+Completion Rate:
+
+Completed Requests / Total Requests × 100
+
+Handle division by zero.
+
+Overdue:
+
+Count of incomplete cases whose applicable deadline has passed.
+
+Due Soon:
+
+Count of incomplete cases approaching their applicable deadline.
+
+The current source code uses a 48-hour due-soon window. Preserve this behavior unless a different business rule is approved.
+
+## 5.2 Service Domain Analytics
+
+Use the actual service-domain identifiers defined in the existing application.
+
+Calculate:
+
+- Request count per domain
+- Percentage of total requests
+- Status distribution per domain
+- Overdue count per domain
+- Completion rate per domain
+
+Provide a chart and accessible tabular equivalent.
+
+## 5.3 Target Timeline Analytics
+
+Use the existing application timeline categories.
+
+The audited schema currently includes:
+
+- Immediate (1–2 weeks)
+- Within 30 days
+- This quarter
+- Advisory / Ongoing
+
+Verify these against the live form and application types before applying changes.
+
+Display:
+
+- Request count
+- Percentage
+- Status breakdown
+- Overdue cases
+- Completion performance
+
+Do not confuse a requested timeline category with a committed deadline.
+
+## 5.4 Dashboard Date Filters
+
+Support:
+
+- All Time
+- Last 7 Days
+- Last 30 Days
+- Last 90 Days
+- Custom Date Range
+
+Verify:
+
+- Timezone consistency
+- Inclusive/exclusive date boundaries
+- Empty reporting periods
+- Previous-period comparison
+- Pagination consistency
+- Refresh behavior
+
+All charts and KPI cards must use consistent filter semantics.
+
+---
+
+# 6. NOTIFICATIONS AND ACTIVITY TRACKING
+
+Implement or verify notifications for:
+
+- New consultation request
+- Case assignment
+- Reassignment
+- Follow-up reminder
+- Approaching deadline
+- Overdue case
+- Status changes
+- Case completion
+
+Each notification must have:
+
+- Unique ID
+- Recipient
+- Related case
+- Notification type
+- Message
+- Creation timestamp
+- Read/unread state
+
+Prevent duplicate notifications from retries.
+
+Notification visibility must be enforced on the backend.
+
+Provide unread counts and mark-as-read actions.
+
+Use polling, server-sent events, or another justified mechanism for updates.
+
+Do not describe polling as instantaneous real-time delivery.
+
+Maintain an auditable activity history for significant case operations.
+
+---
+
+# 7. USERS, ROLES, AND AUTHORIZATION
+
+Support the existing roles:
+
+SUPER ADMIN
+
+ADMIN
+
+STAFF
+
+## Super Admin
+
+Authorized for:
+
+- Administrator management
+- Staff management
+- Invitations
+- Role assignments
+- Account deactivation
+- Security audit access
+- Case administration
+- Reports
+- System settings
+
+## Admin
+
+Authorized for:
+
+- Case management
+- Staff assignment
+- Dashboard analytics
+- Reports
+- Notifications
+- Operational activity
+
+Do not grant administrator account provisioning permissions unless explicitly intended.
+
+## Staff
+
+Authorized for:
+
+- Assigned or otherwise permitted cases
+- Authorized status updates
+- Internal notes
+- Personal notifications
+- Personal security settings
+
+Enforce permissions in backend endpoints and database access controls.
+
+Hiding a button is not authorization.
+
+Test unauthorized access to protected endpoints directly.
+
+## Supabase Security
+
+If using Supabase Auth:
+
+- Implement appropriate RLS policies.
+- Map application roles to verified identities.
+- Prevent user-controlled privilege escalation.
+- Test anonymous, staff, admin, and super-admin access.
+- Never expose service-role or secret credentials to browsers.
+
+If retaining custom backend authentication:
+
+- Keep direct client database access denied unless separately justified.
+- Restrict database access to the trusted backend.
+- Enforce authorization within the backend.
+- Use secure, restricted database credentials.
+- Document why Supabase Auth is not used.
+
+Do not combine both approaches without an explicit integration architecture.
+
+---
+
+# 8. SECURITY HARDENING
+
+Conduct a security review covering:
+
+1. Authentication bypass
+2. Authorization bypass
+3. Privilege escalation
+4. SQL injection
+5. Cross-site scripting
+6. Cross-site request forgery
+7. Session fixation
+8. Session expiration
+9. Password reset abuse
+10. Invitation token abuse
+11. Brute-force login attempts
+12. Rate limiting
+13. Insecure direct object references
+14. Excessive data exposure
+15. Misconfigured CORS
+16. Unsafe file handling
+17. Secrets in frontend bundles
+18. Secrets in Git history
+19. Dependency vulnerabilities
+20. Error-message information disclosure
+21. Database permissions
+22. Supabase RLS configuration
+23. Unprotected public endpoints
+24. Insecure administrator bootstrap
+25. Audit-log tampering
+
+Apply secure defaults.
+
+Ensure production error responses do not expose stack traces, SQL statements, or credentials.
+
+Verify security headers and content security policy.
+
+Implement appropriate rate limits for authentication and public inquiry endpoints.
+
+Do not perform destructive penetration testing against production.
+
+Use isolated testing environments for potentially disruptive tests.
+
+---
+
+# 9. DATABASE MIGRATION AND SOURCE-OF-TRUTH GOVERNANCE
+
+GitHub must contain the canonical migration history.
+
+Implement the following controlled process:
+
+1. Developer creates migration.
+2. Migration is committed to a feature branch.
+3. Automated SQL validation runs.
+4. Migration is tested against a clean database.
+5. Migration is tested against a representative existing schema.
+6. Data preservation is verified.
+7. Security checks are executed.
+8. Pull request is reviewed.
+9. Migration is approved.
+10. Deployment applies the migration.
+11. Migration history is recorded.
+12. Post-migration verification runs.
+
+Never silently alter the production database outside the approved migration process.
+
+Do not automatically apply destructive migrations when merging a pull request.
+
+Avoid schema drift between GitHub and Supabase.
+
+Detect unexpected production schema changes.
+
+Create documentation explaining how to reconcile drift safely.
+
+---
+
+# 10. BACKEND API VERIFICATION
+
+Inspect all existing backend endpoints.
+
+At minimum, verify the following functional categories:
+
+- Authentication
+- Session management
+- Password recovery
+- Administrator provisioning
+- Consultation submission
+- Case listing
+- Case detail
+- Case creation
+- Case updates
+- Assignment
+- Notes
+- Notifications
+- Analytics
+- Reports
+- Activity history
+- User management
+- Settings
+
+Preserve existing API contracts when practical.
+
+If API changes are required:
+
+- Document the old and new contracts.
+- Update frontend consumers.
+- Update tests.
+- Add appropriate compatibility handling.
+- Reject invalid requests consistently.
+
+Use structured validation and predictable error responses.
+
+Protect all administrative routes.
+
+---
+
+# 11. FRONTEND QUALITY AND USER EXPERIENCE
+
+Review every dashboard component for:
+
+- Responsive behavior
+- Loading states
+- Empty states
+- Error states
+- Success feedback
+- Input validation
+- Keyboard navigation
+- Screen-reader labels
+- Color contrast
+- Focus visibility
+- Accessible chart alternatives
+- Form submission feedback
+- Confirmation of consequential actions
+- Mobile navigation
+- Date and time formatting
+- Consistent status colors
+- Consistent terminology
+
+Do not remove working functionality to achieve visual similarity.
+
+## Visual Alignment
+
+Compare the actual rendered dashboard against the supplied architectural reference.
+
+Validate:
+
+- Navy and metallic gold branding
+- Dashboard hierarchy
+- Sidebar organization
+- KPI cards
+- Chart placement
+- Status indicators
+- Recent cases table
+- Workflow visualization
+- Header profile controls
+
+Produce desktop, tablet, and mobile screenshots for review.
+
+Document intentional design deviations.
+
+---
+
+# 12. TESTING REQUIREMENTS
+
+Implement or execute the following test suites.
+
+## 12.1 Static Verification
+
+- TypeScript type checking
+- ESLint
+- Production build
+- Dependency audit
+- Secret scanning
+- Configuration validation
+
+## 12.2 Unit Tests
+
+Test:
+
+- Case status transitions
+- Case number generation
+- Date filtering
+- Completion rate
+- Overdue calculation
+- Due-soon calculation
+- Service-domain distribution
+- Timeline distribution
+- Input validation
+- Role permissions
+
+## 12.3 Integration Tests
+
+Test:
+
+- Public inquiry to case creation
+- Database transactions
+- Duplicate-submission handling
+- Case updates
+- Status history
+- Staff assignment
+- Notifications
+- Authentication
+- Session expiration
+- Reporting
+
+## 12.4 End-to-End Browser Tests
+
+Use Playwright or the existing browser-testing framework.
+
+Test these scenarios:
+
+SCENARIO 1:
+
+A visitor submits a valid consultation request.
+
+Expected:
+
+A single case is created with a unique number and New status.
+
+SCENARIO 2:
+
+An administrator logs in.
+
+Expected:
+
+The dashboard loads with accurate case counts.
+
+SCENARIO 3:
+
+An administrator changes a case to Pending.
+
+Expected:
+
+The database, history, case detail, and KPI counts reflect the update.
+
+SCENARIO 4:
+
+An administrator changes a case to Follow Up.
+
+Expected:
+
+The case appears in the Follow Up queue.
+
+SCENARIO 5:
+
+An administrator completes a case.
+
+Expected:
+
+The case appears as Completed and the completion rate updates.
+
+SCENARIO 6:
+
+A staff member attempts to access a restricted case.
+
+Expected:
+
+The server denies access.
+
+SCENARIO 7:
+
+An anonymous visitor attempts to access protected administrative APIs.
+
+Expected:
+
+The request is rejected.
+
+SCENARIO 8:
+
+A user refreshes a deep administrator route on GitHub Pages.
+
+Expected:
+
+The application restores the intended route without a 404 error.
+
+SCENARIO 9:
+
+The backend is temporarily unavailable.
+
+Expected:
+
+The dashboard displays a useful error without falsely reporting success.
+
+SCENARIO 10:
+
+The user opens the dashboard on mobile.
+
+Expected:
+
+Navigation and core functions remain usable.
+
+## 12.5 Performance Tests
+
+Evaluate:
+
+- Initial load performance
+- Bundle size
+- API latency
+- Database query efficiency
+- Pagination
+- Large case lists
+- Chart rendering
+- Memory usage
+- Accessibility
+- Core Web Vitals
+
+Optimize verified bottlenecks.
+
+Do not invent benchmark results.
+
+---
+
+# 13. DEPLOYMENT REQUIREMENTS
+
+## GitHub Pages
+
+Verify:
+
+- Vite base path
+- Static asset paths
+- React route restoration
+- GitHub Actions workflow
+- Build artifacts
+- Environment variable injection
+- Frontend API base URL
+
+Expected base path:
+
+/PioOrlyLanguisan/
+
+## Backend Hosting
+
+Inspect the existing deployment before changing infrastructure.
+
+Verify:
+
+- Correct start command
+- Correct runtime
+- Database connection
+- CORS
+- Secure cookies
+- Health endpoint
+- Error logging
+- Environment variables
+- Restart behavior
+- Persistent storage assumptions
+
+Do not deploy a filesystem-backed development store as the authoritative production database.
+
+## Supabase
+
+Verify:
+
+- Correct project ID
+- Canonical schema
+- Applied migrations
+- Table constraints
+- Indexes
+- Database access restrictions
+- Authentication architecture
+- Backup and recovery arrangements
+
+Do not claim that GitHub and Supabase are automatically synchronized until the deployment integration is configured and tested.
+
+---
+
+# 14. DEFECT REMEDIATION PROCEDURE
+
+For every discovered defect:
+
+1. Assign a unique defect ID.
+2. Describe the affected feature.
+3. Record the severity.
+4. Identify the root cause.
+5. Identify affected source files.
+6. Describe the expected behavior.
+7. Implement the smallest safe correction.
+8. Add a regression test.
+9. Run related tests.
+10. Document the fix.
+11. Commit the correction.
+12. Verify no regressions were introduced.
+
+Severity levels:
+
+CRITICAL — Security compromise, data corruption, or essential system failure.
+
+HIGH — Major functionality unavailable or unreliable.
+
+MEDIUM — Significant usability or functional defect.
+
+LOW — Minor visual, accessibility, or maintainability issue.
+
+Do not mark defects resolved without verification evidence.
+
+---
+
+# 15. REQUIRED DEVELOPMENT PHASES
+
+Execute in the following order.
+
+PHASE 0 — Baseline Audit
+
+- Inspect current repository
+- Inspect current database
+- Inspect existing deployment
+- Identify migration conflicts
+- Record current test results
+- Produce implementation plan
+
+PHASE 1 — Database Reconciliation
+
+- Select canonical schema
+- Create safe migration plan
+- Validate dependencies
+- Test migrations
+- Verify data preservation
+
+PHASE 2 — Authentication and Security
+
+- Resolve authentication architecture
+- Verify administrator provisioning
+- Harden sessions
+- Implement permissions
+- Test access restrictions
+
+PHASE 3 — Consultation Workflow
+
+- Validate public form
+- Verify case creation
+- Implement idempotency
+- Verify case history
+- Test status transitions
+
+PHASE 4 — Dashboard Analytics
+
+- Verify KPIs
+- Verify domain analytics
+- Verify timeline analytics
+- Verify date filters
+- Validate chart calculations
+
+PHASE 5 — Operational Features
+
+- Staff assignment
+- Notifications
+- Internal notes
+- Activity logs
+- Reporting
+- User administration
+
+PHASE 6 — Visual and Accessibility Alignment
+
+- Compare with architectural design
+- Correct visual differences
+- Verify responsive behavior
+- Perform accessibility testing
+
+PHASE 7 — Security and Defect Remediation
+
+- Execute security checks
+- Fix discovered vulnerabilities
+- Resolve build and runtime defects
+- Add regression tests
+
+PHASE 8 — Deployment Integration
+
+- Validate GitHub Pages
+- Validate backend hosting
+- Validate Supabase
+- Configure approved CI/CD processes
+- Verify environment separation
+
+PHASE 9 — Production Acceptance
+
+- Run final automated tests
+- Run end-to-end workflows
+- Verify security requirements
+- Verify data persistence
+- Verify dashboard accuracy
+- Confirm rollback readiness
+- Prepare release documentation
+
+Do not proceed to production deployment if critical defects remain unresolved.
+
+---
+
+# 16. REQUIRED DELIVERABLES
+
+Produce:
+
+1. Updated GitHub source code
+2. Canonical database migration files
+3. Database architecture documentation
+4. Authentication architecture decision record
+5. Secure backend integration
+6. Completed dashboard features
+7. Corrected consultation workflows
+8. Verified analytics calculations
+9. Functional role-based access controls
+10. Notification and reporting functionality
+11. Automated test suites
+12. Security review results
+13. Build and deployment verification
+14. Updated administrator guide
+15. Updated developer guide
+16. Environment configuration template
+17. Migration and rollback instructions
+18. Defect remediation register
+19. Architecture-to-implementation comparison
+20. Final production-readiness report
+
+---
+
+# 17. FINAL ACCEPTANCE CRITERIA
+
+The project may be classified as production-ready only when:
+
+- The application builds successfully.
+- TypeScript checks pass.
+- Required automated tests pass.
+- No unresolved critical security defects remain.
+- The database schema is compatible with the backend.
+- GitHub contains the authoritative migration history.
+- Production database access is verified.
+- Administrator authentication works securely.
+- Role-based authorization is enforced.
+- Consultation submissions create cases successfully.
+- New cases receive New status.
+- Case statuses update correctly.
+- Case history is retained.
+- Notifications work as designed.
+- Dashboard statistics match persisted records.
+- Reports contain accurate data.
+- The website works on desktop and mobile.
+- GitHub Pages routes work correctly.
+- Backend deployment is verified.
+- Supabase integration is verified.
+- Recovery procedures are documented.
+- No production credentials appear in source code.
+- All critical defects have been remediated and retested.
+
+If a requirement cannot be verified, mark it BLOCKED or NOT VERIFIED rather than PASSED.
+
+---
+
+# 18. EXECUTION AND REPORTING RULES
+
+Start by inspecting the current codebase and database architecture.
+
+Do not immediately rewrite the application.
+
+Do not delete working functionality.
+
+Do not introduce mock data into production analytics.
+
+Do not fabricate test results, deployments, commits, screenshots, or integration success.
+
+If GitHub, Supabase, or backend deployment access is unavailable, prepare the necessary changes and clearly identify the authorization or manual deployment step required.
+
+Never request that secret credentials be pasted into an AI chat.
+
+For each phase, report:
+
+- Work completed
+- Files modified
+- Migrations created
+- Tests executed
+- Tests passed
+- Tests failed
+- Remaining defects
+- Deployment status
+- Blockers
+- Next recommended action
+
+When modifying the repository, use reviewable commits and pull requests.
+
+For potentially destructive production changes, stop and request explicit approval.
+
+## FINAL COMMAND
+
+BEGIN WITH PHASE 0.
+
+Inspect the existing Pio Languisan GitHub repository and its current database integration.
+
+Prioritize the database schema conflict identified in the audit.
+
+Produce an evidence-based remediation plan, then implement approved, non-destructive changes in dependency order.
+
+Continue through all development phases where tools, access, and safety requirements permit.
+
+The final objective is a secure, fully integrated, tested, responsive, and maintainable Consultation Request Management Dashboard that follows the supplied architectural design, with GitHub as the authoritative source of truth and the existing Supabase project as the production database.
+
+Do not declare production readiness until all acceptance criteria have been verified.

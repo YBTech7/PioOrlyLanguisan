@@ -219,7 +219,7 @@ export function computeDashboardAnalytics(
       monthBuckets.set(subMonth, entry);
     }
     if (item.status === 'Completed') {
-      const compMonth = (item.updatedAt || item.createdAt).slice(0, 7);
+      const compMonth = (item.completedAt || item.updatedAt || item.createdAt).slice(0, 7);
       if (/^\d{4}-\d{2}$/.test(compMonth)) {
         const entry = monthBuckets.get(compMonth) ?? { submitted: 0, completed: 0 };
         entry.completed += 1;

@@ -4,6 +4,7 @@ import {
   BarChart3,
   Bell,
   CheckCircle2,
+  ChevronDown,
   Clock,
   FileSpreadsheet,
   FolderKanban,
@@ -15,6 +16,7 @@ import {
   Settings,
   ShieldAlert,
   Timer,
+  Users,
   X,
 } from 'lucide-react';
 import { adminNavToPath, type AdminNavId } from '../lib/adminRouter';
@@ -164,9 +166,15 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   });
 
   const [toast, setToast] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
 
   const isSuperAdmin = session.user.role === 'super_admin';
   const isAdminOrSuper = session.user.role === 'super_admin' || session.user.role === 'admin';
+  const formattedToday = new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  }).format(new Date());
 
   const showToast = useCallback((kind: 'ok' | 'err', text: string) => {
     setToast({ kind, text });
@@ -217,7 +225,9 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        if (mobileDrawerOpen) {
+        if (profileMenuOpen) {
+          setProfileMenuOpen(false);
+        } else if (mobileDrawerOpen) {
           setMobileDrawerOpen(false);
         } else if (routeCaseId) {
           onNavigatePath('/admin/cases');
@@ -226,7 +236,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [mobileDrawerOpen, routeCaseId, onNavigatePath]);
+  }, [profileMenuOpen, mobileDrawerOpen, routeCaseId, onNavigatePath]);
 
   const loadAnalytics = useCallback(async () => {
     if (!isAdminOrSuper) return;
@@ -380,6 +390,22 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
       }
     });
   }, [caseFilters, loadCases, handleApiError]);
+
+  // 60-second background polling synchronization (respecting tab visibility)
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      loadNotifications().catch((err) => {
+        if (err instanceof ApiError && (err.status === 401 || err.code === 'SESSION_EXPIRED')) {
+          handleApiError(err, 'Session expired.');
+        }
+      });
+      if (isAdminOrSuper) {
+        loadAnalytics().catch(() => {});
+      }
+    }, 60_000);
+    return () => window.clearInterval(timer);
+  }, [loadNotifications, loadAnalytics, isAdminOrSuper, handleApiError]);
 
   // Synchronize selected case detail with /admin/cases/:caseId route
   useEffect(() => {
@@ -746,6 +772,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
       icon: Bell,
       badge: unreadCount > 0 ? unreadCount : undefined,
     },
+    { id: 'users', label: 'Users & Access', icon: Users, adminOnly: true },
     { id: 'activity', label: 'Activity Log', icon: Activity, adminOnly: true },
     { id: 'settings', label: 'Settings', icon: Settings },
   ];
@@ -762,7 +789,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
 
   const isRestrictedRoute =
     !isAdminOrSuper &&
-    ['service-analytics', 'target-timelines', 'reports', 'activity'].includes(routeNav);
+    ['service-analytics', 'target-timelines', 'reports', 'users', 'activity'].includes(routeNav);
 
   const renderSidebarNav = (compact = false) => (
     <div className="flex h-full flex-col justify-between p-4">
@@ -828,8 +855,8 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   );
 
   return (
-    <div className="min-h-screen bg-[#061823] text-[#F5F2EB]">
-      <div className="flex min-h-screen">
+    <div className="min-h-screen overflow-x-hidden bg-[#061823] text-[#F5F2EB]">
+      <div className="flex min-h-screen min-w-0">
         {/* Desktop & Tablet Collapsible Sidebar */}
         <aside
           className={`hidden md:flex shrink-0 flex-col border-r border-[#D1A953]/18 bg-[#081F2B] transition-all ${
@@ -884,7 +911,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
               </button>
               <div className="min-w-0">
                 <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-[#DFC585]">
-                  Admin Case Management
+                  Consultation Request Management Dashboard
                 </p>
                 <h1
                   id="admin-portal-title"
@@ -895,33 +922,100 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
               </div>
             </div>
 
-            <div className="flex items-center gap-2.5 shrink-0">
-              <span className="hidden sm:inline-block text-xs text-[#C2D0D6]">
-                {session.user.name} ·{' '}
-                <span className="font-mono text-[#DFC585]">
-                  {formatRoleLabel(session.user.role)}
-                </span>
+            <div className="flex items-center gap-2 sm:gap-2.5 shrink-0">
+              <span className="hidden lg:inline font-mono text-xs tabular-nums text-[#C2D0D6] whitespace-nowrap">
+                {formattedToday}
               </span>
+              <button
+                type="button"
+                onClick={() => handleNavSelect('notifications')}
+                aria-label={
+                  unreadCount > 0
+                    ? `Notifications (${unreadCount} unread)`
+                    : 'Notifications'
+                }
+                className="relative inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border border-[#D1A953]/25 bg-[#0C2935] px-2.5 py-1.5 text-xs font-medium text-[#DFC585] hover:bg-[#123846] whitespace-nowrap shrink-0"
+              >
+                <Bell className="h-4 w-4" aria-hidden="true" />
+                {unreadCount > 0 && (
+                  <span className="font-mono text-[11px] font-semibold tabular-nums text-[#F5F2EB]">
+                    {unreadCount}
+                  </span>
+                )}
+              </button>
               <button
                 type="button"
                 onClick={() => loadFullWorkspace()}
                 aria-label="Refresh dashboard data"
-                className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border border-[#D1A953]/25 bg-[#0C2935] px-3 py-1.5 text-xs font-medium text-[#DFC585] hover:bg-[#123846]"
+                className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border border-[#D1A953]/25 bg-[#0C2935] px-3 py-1.5 text-xs font-medium text-[#DFC585] hover:bg-[#123846] whitespace-nowrap shrink-0"
               >
                 <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
                 <span className="hidden sm:inline">Refresh</span>
               </button>
+
+              <div className="relative hidden sm:block">
+                <button
+                  type="button"
+                  aria-haspopup="menu"
+                  aria-expanded={profileMenuOpen}
+                  onClick={() => setProfileMenuOpen((open) => !open)}
+                  className="inline-flex min-h-[38px] items-center gap-2 rounded-lg border border-[#D1A953]/25 bg-[#0C2935] px-3 py-1.5 text-xs text-[#F5F2EB] hover:bg-[#123846] whitespace-nowrap shrink-0"
+                >
+                  <span className="max-w-[140px] truncate font-medium">{session.user.name}</span>
+                  <span className="font-mono text-[11px] text-[#DFC585]">
+                    {formatRoleLabel(session.user.role)}
+                  </span>
+                  <ChevronDown className="h-3.5 w-3.5 text-[#DFC585]" aria-hidden="true" />
+                </button>
+                {profileMenuOpen && (
+                  <div
+                    role="menu"
+                    aria-label="Administrator profile menu"
+                    className="absolute right-0 mt-2 w-56 rounded-xl border border-[#D1A953]/30 bg-[#081F2B] p-1.5 shadow-xl z-40"
+                  >
+                    <div className="border-b border-[#D1A953]/15 px-3 py-2 text-[11px]">
+                      <p className="truncate font-semibold text-[#F5F2EB]">{session.user.name}</p>
+                      <p className="truncate font-mono text-[#C2D0D6]">{session.user.email}</p>
+                    </div>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setProfileMenuOpen(false);
+                        handleNavSelect('settings');
+                      }}
+                      className="mt-1 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs text-[#F5F2EB] hover:bg-[#123846]"
+                    >
+                      <Settings className="h-3.5 w-3.5 text-[#DFC585]" aria-hidden="true" />
+                      <span>Account &amp; Security</span>
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setProfileMenuOpen(false);
+                        handleLogoutClick();
+                      }}
+                      className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs text-amber-200 hover:bg-[#123846]"
+                    >
+                      <LogOut className="h-3.5 w-3.5" aria-hidden="true" />
+                      <span>Secure Logout</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+
               <button
                 type="button"
                 onClick={() => onNavigatePath('/')}
-                className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border border-[#D1A953]/25 bg-[#0C2935] px-3 py-1.5 text-xs font-medium text-[#F5F2EB] hover:bg-[#123846]"
+                className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border border-[#D1A953]/25 bg-[#0C2935] px-3 py-1.5 text-xs font-medium text-[#F5F2EB] hover:bg-[#123846] whitespace-nowrap shrink-0"
               >
                 <span>Public Site</span>
               </button>
             </div>
           </header>
 
-          <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-6">
+          <main className="flex-1 min-w-0 p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-6">
             {toast && (
               <div
                 role={toast.kind === 'err' ? 'alert' : 'status'}
@@ -1058,6 +1152,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
               />
             ) : (
               <AdminSettingsView
+                viewMode={routeNav === 'users' ? 'users' : 'settings'}
                 currentUserId={session.user.id}
                 userRole={session.user.role}
                 mfaEnabled={Boolean(session.user.mfaEnabled)}

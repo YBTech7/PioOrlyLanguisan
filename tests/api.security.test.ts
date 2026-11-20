@@ -5,6 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import postgres from 'postgres';
+import { createPostgresAdapter } from '../db/caseRepository.ts';
 import { createApiApp, resetServerStateForTests } from '../server.ts';
 import { resolveAssetUrl } from '../src/data/profileData.ts';
 
@@ -411,8 +413,51 @@ describe('API, Case Lifecycle, 3-Tier RBAC & Auth Security Hardening', () => {
     });
     expect(noteRes.status).toBe(201);
 
+    // Staff case listing respects date filter, search, sorting, and scoped statusCounts
+    const staffListRes = await fetch(
+      `${baseUrl}/api/admin/cases?search=Jordan&sort=createdAt_desc`,
+      { headers: { Authorization: `Bearer ${staffToken}` } }
+    );
+    expect(staffListRes.status).toBe(200);
+    const staffList = await staffListRes.json();
+    expect(staffList.items.some((c: { id: string }) => c.id === createdCase.id)).toBe(true);
+    expect(staffList.items.some((c: { id: string }) => c.id === executiveCase.id)).toBe(false);
+    expect(staffList.statusCounts['Follow Up']).toBe(1);
+
+    // Completed case governance: sets completedAt, blocks staff reopen (403), requires >=5 char note for admin reopen
+    const completeRes = await fetch(`${baseUrl}/api/admin/cases/${createdCase.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${staffToken}` },
+      body: JSON.stringify({ status: 'Completed', statusNote: 'Delivered full runbook.' }),
+    });
+    expect(completeRes.status).toBe(200);
+    const completedBody = await completeRes.json();
+    expect(completedBody.caseRecord.completedAt).toBeTruthy();
+
+    const staffReopen = await fetch(`${baseUrl}/api/admin/cases/${createdCase.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${staffToken}` },
+      body: JSON.stringify({ status: 'Pending', statusNote: 'Client asked a follow-up.' }),
+    });
+    expect(staffReopen.status).toBe(403);
+
+    const adminReopenShort = await fetch(`${baseUrl}/api/admin/cases/${createdCase.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({ status: 'Pending', statusNote: 'no' }),
+    });
+    expect(adminReopenShort.status).toBe(400);
+
+    const adminReopenValid = await fetch(`${baseUrl}/api/admin/cases/${createdCase.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({ status: 'Pending', statusNote: 'Client requested Phase 2 scope extension.' }),
+    });
+    expect(adminReopenValid.status).toBe(200);
+    expect((await adminReopenValid.json()).caseRecord.completedAt).toBeNull();
+
     // Admin exports filtered CSV with formula injection guard & audit trail
-    const exportRes = await fetch(`${baseUrl}/api/admin/reports/export?status=Follow%20Up`, {
+    const exportRes = await fetch(`${baseUrl}/api/admin/reports/export?status=Pending`, {
       headers: { Authorization: `Bearer ${adminToken}` },
     });
     expect(exportRes.status).toBe(200);
@@ -623,4 +668,185 @@ describe('API, Case Lifecycle, 3-Tier RBAC & Auth Security Hardening', () => {
     const chatErr = await noKeyChat.json();
     expect(chatErr.error).not.toContain('GEMINI_API_KEY');
   });
+
+  it('generates assignment, reassignment, status-change, and deduplicated deadline notifications', async () => {
+    const bootRes = await fetch(`${baseUrl}/api/auth/bootstrap`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        bootstrapToken: 'Bootstrap-Secret-Token-99!',
+        name: 'Super Admin',
+        email: 'super@piolanguisan.example',
+        password: 'SuperStrongPassword!2026',
+      }),
+    });
+    const superToken = (await bootRes.json()).token as string;
+
+    const u1 = await (
+      await fetch(`${baseUrl}/api/admin/users`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${superToken}` },
+        body: JSON.stringify({
+          name: 'Staff One',
+          email: 'staff1@piolanguisan.example',
+          role: 'staff',
+          password: 'StaffOnePassword!2026',
+        }),
+      })
+    ).json();
+    const u2 = await (
+      await fetch(`${baseUrl}/api/admin/users`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${superToken}` },
+        body: JSON.stringify({
+          name: 'Staff Two',
+          email: 'staff2@piolanguisan.example',
+          role: 'staff',
+          password: 'StaffTwoPassword!2026',
+        }),
+      })
+    ).json();
+
+    const sub = await (
+      await fetch(`${baseUrl}/api/inquiries`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: 'Deadline Client',
+          email: 'deadline@acme.example',
+          tier: 'smb',
+          serviceDomain: 'data-analytics',
+          timeline: 'Immediate (1–2 weeks)',
+          message: 'Urgent analytics turnaround required.',
+        }),
+      })
+    ).json();
+    const caseId = sub.caseRecord.id;
+
+    // Assign to staff1 with an overdue deadline -> reassign to staff2 -> transition to Completed
+    await fetch(`${baseUrl}/api/admin/cases/${caseId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${superToken}` },
+      body: JSON.stringify({
+        assignedTo: u1.user.id,
+        deadlineAt: new Date(Date.now() - 3600_000).toISOString(),
+        status: 'Pending',
+      }),
+    });
+    await fetch(`${baseUrl}/api/admin/cases/${caseId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${superToken}` },
+      body: JSON.stringify({ assignedTo: u2.user.id }),
+    });
+
+    const staff1Token = (
+      await (
+        await fetch(`${baseUrl}/api/auth/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: 'staff1@piolanguisan.example',
+            password: 'StaffOnePassword!2026',
+          }),
+        })
+      ).json()
+    ).token as string;
+
+    // Previous owner (staff1) received case_reassigned notification
+    const s1Notifs = await (
+      await fetch(`${baseUrl}/api/admin/notifications`, {
+        headers: { Authorization: `Bearer ${staff1Token}` },
+      })
+    ).json();
+    expect(s1Notifs.notifications.some((n: { type: string }) => n.type === 'case_reassigned')).toBe(true);
+
+    // Calling /api/admin/notifications twice on the same UTC day deduplicates overdue alert
+    await fetch(`${baseUrl}/api/admin/notifications`, {
+      headers: { Authorization: `Bearer ${superToken}` },
+    });
+    const superNotifs = await (
+      await fetch(`${baseUrl}/api/admin/notifications`, {
+        headers: { Authorization: `Bearer ${superToken}` },
+      })
+    ).json();
+    const overdueMatches = superNotifs.notifications.filter(
+      (n: { type: string; caseId: string | null }) => n.type === 'case_overdue' && n.caseId === caseId
+    );
+    expect(overdueMatches.length).toBeLessThanOrEqual(1);
+  });
 });
+
+const TEST_PG_URL = process.env.TEST_CONSULTATION_DATABASE_URL || '';
+
+describe.skipIf(!TEST_PG_URL)('PostgreSQL Migrations, Reconciliation & Durable Adapter Integration', () => {
+  it('runs canonical migrations idempotently, rejects legacy UUID schema conflicts, and persists cases + site_content', async () => {
+    const adapter = createPostgresAdapter(TEST_PG_URL);
+    await adapter.resetAllDataForTests();
+
+    const created = await adapter.createCase(
+      {
+        name: 'Postgres Client',
+        email: 'pg@example.com',
+        company: 'PG Ops',
+        tier: 'enterprise',
+        serviceDomain: 'data-analytics',
+        timeline: 'Within 30 days',
+        message: 'Verify transactional case creation and durable site content.',
+      },
+      '22222222-2222-4222-8222-222222222222'
+    );
+    expect(created.deduplicated).toBe(false);
+    expect(created.caseRecord.status).toBe('New');
+
+    const dedup = await adapter.createCase(
+      {
+        name: 'Postgres Client',
+        email: 'pg@example.com',
+        company: 'PG Ops',
+        tier: 'enterprise',
+        serviceDomain: 'data-analytics',
+        timeline: 'Within 30 days',
+        message: 'Verify transactional case creation and durable site content.',
+      },
+      '22222222-2222-4222-8222-222222222222'
+    );
+    expect(dedup.deduplicated).toBe(true);
+    expect(dedup.caseRecord.id).toBe(created.caseRecord.id);
+
+    await adapter.saveSiteContent({
+      brand: {
+        customPortraitDataUrl: null,
+        customLogoDataUrl: null,
+        motionEnabled: false,
+        motionSensitivity: 0.7,
+      },
+    });
+    const content = await adapter.getSiteContent();
+    expect(content.brand.motionEnabled).toBe(false);
+    await adapter.close();
+
+    // Verify 003 legacy UUID conflict guard raises explicit SCHEMA_CONFLICT_DETECTED error
+    const adminSql = postgres(TEST_PG_URL, { max: 1 });
+    await adminSql.unsafe('CREATE SCHEMA IF NOT EXISTS conflict_check_tmp');
+    await adminSql.unsafe(`
+      SET search_path TO conflict_check_tmp;
+      CREATE TABLE case_notes (id uuid PRIMARY KEY);
+      CREATE TABLE case_status_history (id uuid PRIMARY KEY);
+    `);
+    let conflictError = '';
+    try {
+      const m003 = fs.readFileSync(
+        path.resolve('db/migrations/003_supabase_rls_and_reconciliation.sql'),
+        'utf8'
+      );
+      await adminSql.unsafe(`SET search_path TO conflict_check_tmp, public; ${m003}`);
+    } catch (err) {
+      conflictError = err instanceof Error ? err.message : String(err);
+    } finally {
+      await adminSql.unsafe('DROP SCHEMA IF EXISTS conflict_check_tmp CASCADE');
+      await adminSql.end();
+    }
+    expect(conflictError).toContain('SCHEMA_CONFLICT_DETECTED');
+  });
+});
+

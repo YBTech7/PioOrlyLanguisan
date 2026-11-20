@@ -73,7 +73,11 @@ export const AdminCaseDetailView: React.FC<AdminCaseDetailViewProps> = ({
   const [timelineDraft, setTimelineDraft] = useState<TargetTimelineValue>(caseRecord.timeline);
 
   const [noteContent, setNoteContent] = useState('');
+  const [statusError, setStatusError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+
+  const isReopeningCompleted =
+    caseRecord.status === 'Completed' && statusDraft !== 'Completed';
 
   const handleCopyRef = async () => {
     try {
@@ -87,6 +91,13 @@ export const AdminCaseDetailView: React.FC<AdminCaseDetailViewProps> = ({
 
   const handleStatusSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setStatusError(null);
+    if (isReopeningCompleted && statusNote.trim().length < 5) {
+      setStatusError(
+        'Reopening a Completed case requires an audit transition note of at least 5 characters.'
+      );
+      return;
+    }
     setSaving(true);
     try {
       await onUpdateCase(caseRecord.id, {
@@ -264,6 +275,14 @@ export const AdminCaseDetailView: React.FC<AdminCaseDetailViewProps> = ({
                   {formatDateTime(caseRecord.deadlineAt)}
                 </dd>
               </div>
+              {caseRecord.completedAt && (
+                <div>
+                  <dt className="text-[#DFC585]">Completed At</dt>
+                  <dd className="mt-1 font-mono tabular-nums text-emerald-300">
+                    {formatDateTime(caseRecord.completedAt)}
+                  </dd>
+                </div>
+              )}
             </dl>
 
             {emailLabel && (
@@ -414,23 +433,38 @@ export const AdminCaseDetailView: React.FC<AdminCaseDetailViewProps> = ({
             </div>
             <div>
               <label htmlFor="detail-status-note" className="block text-xs font-medium text-[#DFC585]">
-                Transition Note (Optional, audited)
+                {isReopeningCompleted
+                  ? 'Reopen Reason (Required, audited)'
+                  : 'Transition Note (Optional, audited)'}
               </label>
               <input
                 id="detail-status-note"
                 type="text"
                 value={statusNote}
-                onChange={(e) => setStatusNote(e.target.value)}
-                placeholder="Reason for status update..."
+                required={isReopeningCompleted}
+                onChange={(e) => {
+                  setStatusNote(e.target.value);
+                  if (statusError) setStatusError(null);
+                }}
+                placeholder={
+                  isReopeningCompleted
+                    ? 'Explain why this completed case is being reopened...'
+                    : 'Reason for status update...'
+                }
                 className="mt-1.5 min-h-[40px] w-full rounded-lg border border-[#D1A953]/25 bg-[#061823] px-3 py-2 text-xs text-[#F5F2EB]"
               />
             </div>
+            {statusError && (
+              <p role="alert" className="text-xs text-amber-300">
+                {statusError}
+              </p>
+            )}
             <button
               type="submit"
               disabled={saving}
               className="w-full min-h-[42px] rounded-lg bg-[#D1A953] px-4 py-2 text-xs font-semibold text-[#061823] hover:bg-[#DFC585] disabled:opacity-50"
             >
-              Update Status
+              {isReopeningCompleted ? 'Reopen Case & Update Status' : 'Update Status'}
             </button>
           </form>
 

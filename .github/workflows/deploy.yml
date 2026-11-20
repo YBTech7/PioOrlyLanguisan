@@ -44,6 +44,39 @@ jobs:
       - name: Install dependencies
         run: npm install --no-audit --no-fund
 
+      - name: Validate SQL migrations and reconciliation
+        env:
+          TEST_CONSULTATION_DATABASE_URL: postgresql://postgres:test@localhost:${{ job.services.postgres.ports[5432] }}/portfolio_test
+          POSTGRES_ADMIN_URL: postgresql://postgres:test@localhost:${{ job.services.postgres.ports[5432] }}/postgres
+        run: |
+          node --input-type=module -e "
+            import fs from 'node:fs';
+            import postgres from 'postgres';
+            const adminSql = postgres(process.env.POSTGRES_ADMIN_URL, { max: 1 });
+            await adminSql.unsafe('CREATE DATABASE portfolio_reconcile_test');
+            await adminSql.end();
+
+            const dbUrl = process.env.TEST_CONSULTATION_DATABASE_URL;
+            const sql = postgres(dbUrl, { max: 1 });
+            for (const f of [
+              'db/migrations/001_case_management.sql',
+              'db/migrations/002_admin_auth_security.sql',
+              'db/migrations/003_supabase_rls_and_reconciliation.sql',
+              'db/migrations/003_supabase_rls_and_reconciliation.sql',
+            ]) {
+              await sql.unsafe(fs.readFileSync(f, 'utf8'));
+            }
+            const migrations = await sql\`SELECT version FROM schema_migrations ORDER BY version\`;
+            console.log('Verified canonical migrations:', migrations.map((r) => r.version));
+            await sql.end();
+
+            const recUrl = dbUrl.replace(/portfolio_test$/, 'portfolio_reconcile_test');
+            const recSql = postgres(recUrl, { max: 1 });
+            await recSql.unsafe(fs.readFileSync('supabase/migrations/20261120000002_canonical_case_management_reconcile.sql', 'utf8'));
+            await recSql.unsafe(fs.readFileSync('supabase/migrations/20261120000002_canonical_case_management_reconcile.sql', 'utf8'));
+            await recSql.end();
+          "
+
       - name: Check API and TypeScript
         env:
           TEST_CONSULTATION_DATABASE_URL: postgresql://postgres:test@localhost:${{ job.services.postgres.ports[5432] }}/portfolio_test

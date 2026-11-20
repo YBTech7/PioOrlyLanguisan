@@ -1679,41 +1679,10 @@ export function createApiApp(): Express {
     };
 
     try {
-      if (session.role === 'staff') {
-        const all = await repo.getAllCases();
-        const permitted = all.filter(
-          (c) => c.assignedTo === null || c.assignedTo === session.userId
-        );
-        const search = (filters.search || '').trim().toLowerCase();
-        const filtered = permitted.filter((c) => {
-          if (filters.status && filters.status !== 'All' && c.status !== filters.status) return false;
-          if (filters.serviceDomain && filters.serviceDomain !== 'All' && c.serviceDomain !== filters.serviceDomain) return false;
-          if (filters.timeline && filters.timeline !== 'All' && c.timeline !== filters.timeline) return false;
-          if (search && ![c.caseNumber, c.id, c.name, c.email, c.company, c.message].join(' ').toLowerCase().includes(search)) return false;
-          return true;
-        });
-        const pageSize = Math.min(100, Math.max(1, filters.pageSize ?? 20));
-        const total = filtered.length;
-        const totalPages = Math.max(1, Math.ceil(total / pageSize));
-        const page = Math.min(totalPages, Math.max(1, filters.page ?? 1));
-        const offset = (page - 1) * pageSize;
-        res.json({
-          items: filtered.slice(offset, offset + pageSize),
-          total,
-          page,
-          pageSize,
-          totalPages,
-          statusCounts: {
-            All: permitted.length,
-            New: permitted.filter((c) => c.status === 'New').length,
-            Pending: permitted.filter((c) => c.status === 'Pending').length,
-            'Follow Up': permitted.filter((c) => c.status === 'Follow Up').length,
-            Completed: permitted.filter((c) => c.status === 'Completed').length,
-          },
-        });
-        return;
-      }
-      const result = await repo.listCases(filters);
+      const result = await repo.listCases({
+        ...filters,
+        ...(session.role === 'staff' ? { staffScopedUserId: session.userId ?? '__none__' } : {}),
+      });
       res.json(result);
     } catch {
       res.status(503).json({ error: 'Unable to load consultation cases.' });
@@ -1883,6 +1852,25 @@ export function createApiApp(): Express {
         return;
       }
 
+      if (
+        existingDetail.caseRecord.status === 'Completed' &&
+        updates.status !== undefined &&
+        updates.status !== 'Completed'
+      ) {
+        if (req.authSession!.role === 'staff') {
+          res.status(403).json({
+            error: 'Only Admin or Super Admin accounts may reopen a Completed consultation case.',
+          });
+          return;
+        }
+        if (!updates.statusNote || updates.statusNote.trim().length < 5) {
+          res.status(400).json({
+            error: 'Reopening a Completed case requires an audit transition note of at least 5 characters.',
+          });
+          return;
+        }
+      }
+
       const updated = await repo.updateCase(
         req.params.id,
         updates,
@@ -2013,6 +2001,7 @@ export function createApiApp(): Express {
   app.get('/api/admin/notifications', requireAuth, async (req: AuthenticatedRequest, res) => {
     const repo = getCaseRepository();
     try {
+      await repo.syncDeadlineNotifications();
       const items = await repo.listNotifications(req.authSession!.userId);
       const unreadCount = items.filter((n) => !n.readAt).length;
       res.json({ notifications: items, unreadCount });
@@ -2292,6 +2281,7 @@ export function createApiApp(): Express {
     try {
       const repo = getCaseRepository();
       const s = req.authSession!;
+      await repo.syncDeadlineNotifications().catch(() => 0);
       const allCases = await repo.getAllCases();
       const visibleCases =
         s.role === 'staff'
@@ -2419,9 +2409,14 @@ export function createApiApp(): Express {
 }
 
 async function startServer() {
+  const isProd = process.env.NODE_ENV === 'production';
+  if (isProd && !(process.env.SESSION_SECRET || '').trim()) {
+    console.warn(
+      'SECURITY WARNING: SESSION_SECRET is unset in production; signed cookie sessions will invalidate on server restart.'
+    );
+  }
   const app = createApiApp();
   const PORT = Number(process.env.PORT) || 3000;
-  const isProd = process.env.NODE_ENV === 'production';
 
   if (!isProd) {
     const { createServer: createViteServer } = await import('vite');

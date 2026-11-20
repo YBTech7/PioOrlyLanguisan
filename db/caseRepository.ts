@@ -8,6 +8,7 @@ import {
   INITIAL_PROJECTS,
   WORKFLOW_VISUAL_URL,
 } from '../src/data/profileData.ts';
+import { isCaseDueSoon, isCaseOverdue } from '../src/lib/caseAnalytics.ts';
 import type {
   AdminInvitation,
   AdminNotification,
@@ -76,7 +77,7 @@ export interface PersistentCaseStore {
   caseStatusHistory: CaseStatusHistoryEntry[];
   caseNotes: CaseNote[];
   caseActivity: CaseActivityEntry[];
-  notifications: AdminNotification[];
+  notifications: Array<AdminNotification & { dedupKey?: string }>;
   idempotencyKeys: IdempotencyEntry[];
   projects: ProjectCase[];
   insights: InsightArticle[];
@@ -110,6 +111,7 @@ export interface CaseQueryFilters {
   serviceDomain?: ServiceDomainId | 'All';
   timeline?: TargetTimelineValue | 'All';
   assignedTo?: string | 'All' | 'unassigned';
+  staffScopedUserId?: string | null;
   fromIso?: string;
   toIso?: string;
   sortBy?: 'submittedAt' | 'updatedAt' | 'followUpAt' | 'caseNumber' | 'status';
@@ -226,6 +228,7 @@ function createInitialStore(): PersistentCaseStore {
     createdAt: '2026-11-15T14:20:00.000Z',
     followUpAt: null,
     deadlineAt: null,
+    completedAt: null,
     updatedAt: '2026-11-15T14:20:00.000Z',
     version: 1,
     notes: 'Sample development record.',
@@ -340,6 +343,12 @@ function hydrateLegacyRecord(raw: Record<string, unknown>, seq: number): CaseRec
     createdAt,
     followUpAt: typeof raw.followUpAt === 'string' ? raw.followUpAt : null,
     deadlineAt: typeof raw.deadlineAt === 'string' ? raw.deadlineAt : null,
+    completedAt:
+      typeof raw.completedAt === 'string'
+        ? raw.completedAt
+        : status === 'Completed'
+          ? updatedAt
+          : null,
     updatedAt,
     version: typeof raw.version === 'number' ? raw.version : 1,
     ...(typeof raw.notes === 'string' ? { notes: raw.notes } : {}),
@@ -441,6 +450,7 @@ function persistFileStore(store: PersistentCaseStore): void {
 
 export function resetRepositoryForTests(): void {
   memoryStore = null;
+  cachedRepo = null;
 }
 
 function sanitizePublicUser(u: StoredUser): AdminUser {
@@ -469,6 +479,13 @@ function applyCaseFilters(cases: readonly CaseRecord[], filters: CaseQueryFilter
   const toMs = filters.toIso ? Date.parse(filters.toIso) : NaN;
 
   return cases.filter((c) => {
+    if (
+      filters.staffScopedUserId !== undefined &&
+      c.assignedTo !== null &&
+      c.assignedTo !== filters.staffScopedUserId
+    ) {
+      return false;
+    }
     if (filters.status && filters.status !== 'All' && c.status !== filters.status) return false;
     if (
       filters.serviceDomain &&
@@ -543,18 +560,36 @@ function buildStatusCounts(cases: readonly CaseRecord[]): Record<CaseStatus | 'A
 // PostgreSQL Backend Adapter
 // ---------------------------------------------------------------------------
 
-function createPostgresAdapter(dbUrl: string) {
+export function createPostgresAdapter(dbUrl: string) {
   const sql = postgres(dbUrl, { max: 5, connect_timeout: 5 });
   let readyPromise: Promise<void> | null = null;
 
   const ensureReady = (): Promise<void> => {
     if (readyPromise) return readyPromise;
     readyPromise = (async () => {
+      const conflicts = await sql<{ table_name: string; data_type: string }[]>`
+        SELECT table_name, data_type
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name IN ('case_notes', 'case_status_history')
+          AND column_name = 'id'
+          AND data_type = 'uuid'
+      `;
+      if (conflicts.length > 0) {
+        throw new Error(
+          'SCHEMA_CONFLICT_DETECTED: Legacy UUID schema detected in public. Apply supabase/migrations/20261120000002_canonical_case_management_reconcile.sql.'
+        );
+      }
+
       const m1 = path.resolve(process.cwd(), 'db/migrations/001_case_management.sql');
       await sql.unsafe(fs.readFileSync(m1, 'utf-8'));
       const m2 = path.resolve(process.cwd(), 'db/migrations/002_admin_auth_security.sql');
       if (fs.existsSync(m2)) {
         await sql.unsafe(fs.readFileSync(m2, 'utf-8'));
+      }
+      const m3 = path.resolve(process.cwd(), 'db/migrations/003_supabase_rls_and_reconciliation.sql');
+      if (fs.existsSync(m3)) {
+        await sql.unsafe(fs.readFileSync(m3, 'utf-8'));
       }
     })().catch((err) => {
       readyPromise = null;
@@ -583,6 +618,7 @@ function createPostgresAdapter(dbUrl: string) {
     createdAt: new Date(String(row.submitted_at)).toISOString(),
     followUpAt: row.follow_up_at ? new Date(String(row.follow_up_at)).toISOString() : null,
     deadlineAt: row.deadline_at ? new Date(String(row.deadline_at)).toISOString() : null,
+    completedAt: row.completed_at ? new Date(String(row.completed_at)).toISOString() : null,
     updatedAt: new Date(String(row.updated_at)).toISOString(),
     version: Number(row.version ?? 1),
     ...(row.latest_note ? { notes: String(row.latest_note) } : {}),
@@ -1175,7 +1211,11 @@ function createPostgresAdapter(dbUrl: string) {
 
     async listCases(filters: CaseQueryFilters): Promise<CaseListResponse> {
       const all = await this.getAllCases();
-      const filtered = applyCaseFilters(all, filters);
+      const visibleBase =
+        filters.staffScopedUserId !== undefined
+          ? all.filter((c) => c.assignedTo === null || c.assignedTo === filters.staffScopedUserId)
+          : all;
+      const filtered = applyCaseFilters(visibleBase, filters);
       const sorted = sortCases(filtered, filters.sortBy, filters.sortDir);
       const pageSize = Math.min(100, Math.max(1, filters.pageSize ?? 20));
       const total = sorted.length;
@@ -1188,7 +1228,7 @@ function createPostgresAdapter(dbUrl: string) {
         page,
         pageSize,
         totalPages,
-        statusCounts: buildStatusCounts(all),
+        statusCounts: buildStatusCounts(visibleBase),
       };
     },
 
@@ -1278,6 +1318,12 @@ function createPostgresAdapter(dbUrl: string) {
         const nextTier = updates.tier ?? existing.tier;
         const nextDomain = updates.serviceDomain ?? existing.serviceDomain;
         const nextTimeline = updates.timeline ?? existing.timeline;
+        const nextCompletedAt =
+          updates.status !== undefined && updates.status !== existing.status
+            ? nextStatus === 'Completed'
+              ? new Date().toISOString()
+              : null
+            : existing.completedAt ?? null;
 
         await tx`
           UPDATE cases
@@ -1286,6 +1332,7 @@ function createPostgresAdapter(dbUrl: string) {
               assigned_to = ${nextAssigned},
               follow_up_at = ${nextFollowUp},
               deadline_at = ${nextDeadline},
+              completed_at = ${nextCompletedAt},
               organization = ${nextCompany},
               organization_tier = ${nextTier},
               service_domain = ${nextDomain},
@@ -1319,6 +1366,25 @@ function createPostgresAdapter(dbUrl: string) {
               ${tx.json({ from: existing.status, to: updates.status, note: updates.statusNote || '' })}
             )
           `;
+
+          const statusNotifType = updates.status === 'Completed' ? 'case_completed' : 'status_changed';
+          const statusNotifTitle =
+            updates.status === 'Completed'
+              ? `Case ${existing.caseNumber} completed`
+              : `${existing.caseNumber} moved to ${updates.status}`;
+          const statusNotifRecipient =
+            nextAssigned && nextAssigned !== actor.id ? nextAssigned : null;
+          await tx`
+            INSERT INTO notifications (id, recipient_id, case_id, type, title, message)
+            VALUES (
+              ${`ntf-${crypto.randomUUID().slice(0, 12)}`},
+              ${statusNotifRecipient},
+              ${existing.id},
+              ${statusNotifType},
+              ${statusNotifTitle},
+              ${`${actor.email} changed ${existing.caseNumber} (${existing.name}) from ${existing.status} to ${updates.status}.`}
+            )
+          `;
         }
 
         if (updates.assignedTo !== undefined && updates.assignedTo !== existing.assignedTo) {
@@ -1343,6 +1409,19 @@ function createPostgresAdapter(dbUrl: string) {
                 'case_assigned',
                 ${`Assigned ${existing.caseNumber}`},
                 ${`${actor.email} assigned case ${existing.caseNumber} (${existing.name}) to you.`}
+              )
+            `;
+          }
+          if (existing.assignedTo && existing.assignedTo !== updates.assignedTo) {
+            await tx`
+              INSERT INTO notifications (id, recipient_id, case_id, type, title, message)
+              VALUES (
+                ${`ntf-${crypto.randomUUID().slice(0, 12)}`},
+                ${existing.assignedTo},
+                ${existing.id},
+                'case_reassigned',
+                ${`Reassigned ${existing.caseNumber}`},
+                ${`${actor.email} reassigned case ${existing.caseNumber} (${existing.name}).`}
               )
             `;
           }
@@ -1508,32 +1587,107 @@ function createPostgresAdapter(dbUrl: string) {
       }
     },
 
+    async syncDeadlineNotifications(nowMs = Date.now()): Promise<number> {
+      await ensureReady();
+      const all = await this.getAllCases();
+      const dayKey = new Date(nowMs).toISOString().slice(0, 10);
+      let created = 0;
+
+      for (const c of all) {
+        if (c.status === 'Completed') continue;
+        if (isCaseOverdue(c, nowMs)) {
+          const dedupKey = `overdue:${c.id}:${dayKey}`;
+          const inserted = await sql`
+            INSERT INTO notifications (id, recipient_id, case_id, type, title, message, dedup_key)
+            VALUES (
+              ${`ntf-${crypto.randomUUID().slice(0, 12)}`},
+              ${c.assignedTo},
+              ${c.id},
+              'case_overdue',
+              ${`Overdue case ${c.caseNumber}`},
+              ${`${c.caseNumber} (${c.name}) has passed its scheduled follow-up or deadline.`},
+              ${dedupKey}
+            )
+            ON CONFLICT (dedup_key) WHERE dedup_key IS NOT NULL DO NOTHING
+            RETURNING id
+          `;
+          created += inserted.length;
+        } else if (isCaseDueSoon(c, nowMs)) {
+          const dedupKey = `due_soon:${c.id}:${dayKey}`;
+          const inserted = await sql`
+            INSERT INTO notifications (id, recipient_id, case_id, type, title, message, dedup_key)
+            VALUES (
+              ${`ntf-${crypto.randomUUID().slice(0, 12)}`},
+              ${c.assignedTo},
+              ${c.id},
+              'case_due_soon',
+              ${`Due soon: ${c.caseNumber}`},
+              ${`${c.caseNumber} (${c.name}) has a deadline or follow-up within the next 48 hours.`},
+              ${dedupKey}
+            )
+            ON CONFLICT (dedup_key) WHERE dedup_key IS NOT NULL DO NOTHING
+            RETURNING id
+          `;
+          created += inserted.length;
+        }
+      }
+      return created;
+    },
+
     async getSiteContent() {
-      const store = ensureFileStore();
-      return {
-        projects: store.projects,
-        insights: store.insights,
-        faqs: store.faqs,
-        brand: store.brand,
+      await ensureReady();
+      const [row] = await sql<{ payload: Record<string, unknown> }[]>`
+        SELECT payload FROM site_content WHERE id = 'default' LIMIT 1
+      `;
+      if (row && row.payload) {
+        const raw = row.payload as {
+          projects?: ProjectCase[];
+          insights?: InsightArticle[];
+          faqs?: FaqItem[];
+          brand?: BrandSettings;
+        };
+        return {
+          projects: Array.isArray(raw.projects) ? raw.projects : INITIAL_PROJECTS,
+          insights: Array.isArray(raw.insights) ? raw.insights : INITIAL_INSIGHTS,
+          faqs: Array.isArray(raw.faqs) ? raw.faqs : INITIAL_FAQS,
+          brand: { ...DEFAULT_BRAND, ...(raw.brand || {}) },
+        };
+      }
+
+      const initialPayload = {
+        projects: INITIAL_PROJECTS,
+        insights: INITIAL_INSIGHTS,
+        faqs: INITIAL_FAQS,
+        brand: DEFAULT_BRAND,
       };
+      await sql`
+        INSERT INTO site_content (id, payload)
+        VALUES ('default', ${sql.json(initialPayload as unknown as postgres.JSONValue)})
+        ON CONFLICT (id) DO NOTHING
+      `;
+      return initialPayload;
     },
 
     async saveSiteContent(updates: {
       projects?: ProjectCase[];
       brand?: BrandSettings;
     }) {
-      return withStoreLock(() => {
-        const store = structuredClone(ensureFileStore());
-        if (updates.projects) store.projects = updates.projects;
-        if (updates.brand) store.brand = updates.brand;
-        persistFileStore(store);
-        return {
-          projects: store.projects,
-          insights: store.insights,
-          faqs: store.faqs,
-          brand: store.brand,
-        };
-      });
+      await ensureReady();
+      const current = await this.getSiteContent();
+      const nextPayload = {
+        projects: updates.projects ?? current.projects,
+        insights: current.insights,
+        faqs: current.faqs,
+        brand: updates.brand ?? current.brand,
+      };
+      await sql`
+        INSERT INTO site_content (id, payload, updated_at)
+        VALUES ('default', ${sql.json(nextPayload as unknown as postgres.JSONValue)}, now())
+        ON CONFLICT (id) DO UPDATE
+          SET payload = EXCLUDED.payload,
+              updated_at = now()
+      `;
+      return nextPayload;
     },
   };
 }
@@ -1963,6 +2117,7 @@ function createFileAdapter() {
           createdAt: now,
           followUpAt: null,
           deadlineAt: null,
+          completedAt: null,
           updatedAt: now,
           version: 1,
         };
@@ -2041,7 +2196,11 @@ function createFileAdapter() {
 
     async listCases(filters: CaseQueryFilters): Promise<CaseListResponse> {
       const all = await this.getAllCases();
-      const filtered = applyCaseFilters(all, filters);
+      const visibleBase =
+        filters.staffScopedUserId !== undefined
+          ? all.filter((c) => c.assignedTo === null || c.assignedTo === filters.staffScopedUserId)
+          : all;
+      const filtered = applyCaseFilters(visibleBase, filters);
       const sorted = sortCases(filtered, filters.sortBy, filters.sortDir);
       const pageSize = Math.min(100, Math.max(1, filters.pageSize ?? 20));
       const total = sorted.length;
@@ -2054,7 +2213,7 @@ function createFileAdapter() {
         page,
         pageSize,
         totalPages,
-        statusCounts: buildStatusCounts(all),
+        statusCounts: buildStatusCounts(visibleBase),
       };
     },
 
@@ -2094,6 +2253,7 @@ function createFileAdapter() {
 
         if (updates.status !== undefined && updates.status !== prevStatus) {
           target.status = updates.status;
+          target.completedAt = updates.status === 'Completed' ? now : null;
           store.caseStatusHistory.unshift({
             id: `hist-${crypto.randomUUID().slice(0, 12)}`,
             caseId: target.id,
@@ -2112,6 +2272,21 @@ function createFileAdapter() {
             actorEmail: actor.email,
             action: 'status_changed',
             metadata: { from: prevStatus, to: updates.status, note: updates.statusNote || '' },
+            createdAt: now,
+          });
+          const nextOwner = updates.assignedTo !== undefined ? updates.assignedTo : prevAssigned;
+          store.notifications.unshift({
+            id: `ntf-${crypto.randomUUID().slice(0, 12)}`,
+            recipientId: nextOwner && nextOwner !== actor.id ? nextOwner : null,
+            caseId: target.id,
+            caseNumber: target.caseNumber,
+            type: updates.status === 'Completed' ? 'case_completed' : 'status_changed',
+            title:
+              updates.status === 'Completed'
+                ? `Case ${target.caseNumber} completed`
+                : `${target.caseNumber} moved to ${updates.status}`,
+            message: `${actor.email} changed ${target.caseNumber} (${target.name}) from ${prevStatus} to ${updates.status}.`,
+            readAt: null,
             createdAt: now,
           });
         }
@@ -2137,6 +2312,19 @@ function createFileAdapter() {
               type: 'case_assigned',
               title: `Assigned ${target.caseNumber}`,
               message: `${actor.email} assigned case ${target.caseNumber} (${target.name}) to you.`,
+              readAt: null,
+              createdAt: now,
+            });
+          }
+          if (prevAssigned && prevAssigned !== updates.assignedTo) {
+            store.notifications.unshift({
+              id: `ntf-${crypto.randomUUID().slice(0, 12)}`,
+              recipientId: prevAssigned,
+              caseId: target.id,
+              caseNumber: target.caseNumber,
+              type: 'case_reassigned',
+              title: `Reassigned ${target.caseNumber}`,
+              message: `${actor.email} reassigned case ${target.caseNumber} (${target.name}).`,
               readAt: null,
               createdAt: now,
             });
@@ -2310,6 +2498,64 @@ function createFileAdapter() {
       });
     },
 
+    async syncDeadlineNotifications(nowMs = Date.now()): Promise<number> {
+      return withStoreLock(() => {
+        const store = structuredClone(ensureFileStore());
+        const dayKey = new Date(nowMs).toISOString().slice(0, 10);
+        const existingKeys = new Set(
+          store.notifications.map((n) => n.dedupKey).filter((k): k is string => Boolean(k))
+        );
+        let created = 0;
+        const now = new Date(nowMs).toISOString();
+
+        for (const c of store.cases) {
+          if (c.status === 'Completed') continue;
+          if (isCaseOverdue(c, nowMs)) {
+            const dedupKey = `overdue:${c.id}:${dayKey}`;
+            if (!existingKeys.has(dedupKey)) {
+              existingKeys.add(dedupKey);
+              store.notifications.unshift({
+                id: `ntf-${crypto.randomUUID().slice(0, 12)}`,
+                recipientId: c.assignedTo,
+                caseId: c.id,
+                caseNumber: c.caseNumber,
+                type: 'case_overdue',
+                title: `Overdue case ${c.caseNumber}`,
+                message: `${c.caseNumber} (${c.name}) has passed its scheduled follow-up or deadline.`,
+                dedupKey,
+                readAt: null,
+                createdAt: now,
+              });
+              created += 1;
+            }
+          } else if (isCaseDueSoon(c, nowMs)) {
+            const dedupKey = `due_soon:${c.id}:${dayKey}`;
+            if (!existingKeys.has(dedupKey)) {
+              existingKeys.add(dedupKey);
+              store.notifications.unshift({
+                id: `ntf-${crypto.randomUUID().slice(0, 12)}`,
+                recipientId: c.assignedTo,
+                caseId: c.id,
+                caseNumber: c.caseNumber,
+                type: 'case_due_soon',
+                title: `Due soon: ${c.caseNumber}`,
+                message: `${c.caseNumber} (${c.name}) has a deadline or follow-up within the next 48 hours.`,
+                dedupKey,
+                readAt: null,
+                createdAt: now,
+              });
+              created += 1;
+            }
+          }
+        }
+
+        if (created > 0) {
+          persistFileStore(store);
+        }
+        return created;
+      });
+    },
+
     async getSiteContent() {
       const store = ensureFileStore();
       return {
@@ -2343,6 +2589,10 @@ function createFileAdapter() {
 export type CaseRepository = ReturnType<typeof createFileAdapter> | ReturnType<typeof createPostgresAdapter>;
 
 let cachedRepo: CaseRepository | null = null;
+
+export function clearCachedCaseRepository(): void {
+  cachedRepo = null;
+}
 
 export function getCaseRepository(): CaseRepository {
   if (cachedRepo) return cachedRepo;
