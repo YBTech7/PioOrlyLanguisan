@@ -82,7 +82,7 @@ export const AdminReportsView: React.FC<AdminReportsViewProps> = ({
               timeline distribution, monthly trends, and spreadsheet formula-injection protection.
             </p>
           </div>
-          {userRole === 'admin' ? (
+          {userRole === 'admin' || userRole === 'super_admin' ? (
             <button
               type="button"
               disabled={downloading}
@@ -94,7 +94,7 @@ export const AdminReportsView: React.FC<AdminReportsViewProps> = ({
             </button>
           ) : (
             <span className="rounded-lg border border-[#D1A953]/25 bg-[#061823] px-3 py-2 text-xs text-[#C2D0D6]">
-              CSV exports are restricted to Administrator role
+              CSV exports are restricted to Administrator and Super Administrator roles
             </span>
           )}
         </div>

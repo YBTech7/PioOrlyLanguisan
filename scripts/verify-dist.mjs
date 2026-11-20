@@ -14,6 +14,7 @@ const EXPECTED_EMBLEM_SHA256 =
   '97b27240df101c59508930f5aa0a8621a716de3d31ebbb853e6e8a05c62ac312';
 
 const REQUIRED_PUBLIC_ASSETS = [
+  '404.html',
   'favicon.svg',
   'assets/images/pl-circular-emblem.png',
   'assets/images/portrait-pio-languisan.png',

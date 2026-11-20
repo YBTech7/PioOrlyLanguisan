@@ -241,3 +241,78 @@ export function runConsultationMailer(inbox: ReturnType<typeof openInbox>) {
   }
   void poll();
 }
+
+export async function sendTransactionalEmail(params: {
+  to: string;
+  subject: string;
+  textBody: string;
+}): Promise<{ delivered: boolean; providerMessageId?: string | null; reason?: string }> {
+  const config = getConsultationMailerConfig();
+  if (!config) {
+    return { delivered: false, reason: 'EMAIL_NOT_CONFIGURED' };
+  }
+  if (!emailAddress.test(params.to)) {
+    return { delivered: false, reason: 'INVALID_RECIPIENT' };
+  }
+
+  let tokenResponse: Response;
+  try {
+    tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      body: new URLSearchParams({
+        grant_type: 'refresh_token',
+        client_id: config.GMAIL_CLIENT_ID,
+        client_secret: config.GMAIL_CLIENT_SECRET,
+        refresh_token: config.GMAIL_REFRESH_TOKEN,
+      }),
+      signal: AbortSignal.timeout(10000),
+    });
+  } catch {
+    return { delivered: false, reason: 'TOKEN_NETWORK_ERROR' };
+  }
+
+  if (!tokenResponse.ok) {
+    return { delivered: false, reason: 'TOKEN_REJECTED' };
+  }
+
+  const token = (await tokenResponse.json().catch(() => null)) as { access_token?: string } | null;
+  if (typeof token?.access_token !== 'string' || !token.access_token.trim()) {
+    return { delivered: false, reason: 'MISSING_ACCESS_TOKEN' };
+  }
+
+  const bodyLines = Buffer.from(params.textBody).toString('base64').match(/.{1,76}/g) ?? [];
+  const raw = Buffer.from(
+    [
+      'From: ' + config.from,
+      'To: ' + params.to,
+      'Subject: ' + params.subject,
+      'MIME-Version: 1.0',
+      'Content-Type: text/plain; charset=UTF-8',
+      'Content-Transfer-Encoding: base64',
+      '',
+      ...bodyLines,
+    ].join('\r\n')
+  ).toString('base64url');
+
+  let sendResponse: Response;
+  try {
+    sendResponse = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer ' + token.access_token,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ raw }),
+      signal: AbortSignal.timeout(15000),
+    });
+  } catch {
+    return { delivered: false, reason: 'SEND_NETWORK_ERROR' };
+  }
+
+  if (!sendResponse.ok) {
+    return { delivered: false, reason: 'SEND_FAILED' };
+  }
+
+  const result = (await sendResponse.json().catch(() => null)) as { id?: string } | null;
+  return { delivered: true, providerMessageId: result?.id ?? null };
+}

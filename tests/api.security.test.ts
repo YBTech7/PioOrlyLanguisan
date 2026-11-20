@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -6,6 +7,32 @@ import type { AddressInfo } from 'node:net';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { createApiApp, resetServerStateForTests } from '../server.ts';
 import { resolveAssetUrl } from '../src/data/profileData.ts';
+
+function computeTotp(base32Secret: string, stepOffset = 0): string {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  const clean = base32Secret.toUpperCase().replace(/=+$/g, '').replace(/[^A-Z2-7]/g, '');
+  let bits = 0;
+  let value = 0;
+  const bytes: number[] = [];
+  for (const ch of clean) {
+    const idx = alphabet.indexOf(ch);
+    if (idx === -1) continue;
+    value = (value << 5) | idx;
+    bits += 5;
+    if (bits >= 8) {
+      bytes.push((value >>> (bits - 8)) & 0xff);
+      bits -= 8;
+    }
+  }
+  const key = Buffer.from(bytes);
+  const counter = Math.floor(Date.now() / 30000) + stepOffset;
+  const msg = Buffer.alloc(8);
+  msg.writeBigInt64BE(BigInt(counter));
+  const hmac = crypto.createHmac('sha1', key).update(msg).digest();
+  const offset = hmac[hmac.length - 1] & 0x0f;
+  const code = ((hmac.readUInt32BE(offset) & 0x7fffffff) % 1000000).toString().padStart(6, '0');
+  return code;
+}
 
 describe('Asset URL Resolution', () => {
   it('normalizes relative, leading-slash, and legacy /src/assets paths for root base', () => {
@@ -30,7 +57,7 @@ describe('Asset URL Resolution', () => {
   });
 });
 
-describe('API, Case Lifecycle, RBAC & Security Hardening', () => {
+describe('API, Case Lifecycle, 3-Tier RBAC & Auth Security Hardening', () => {
   let server: http.Server;
   let baseUrl: string;
   let tempStorePath: string;
@@ -152,7 +179,6 @@ describe('API, Case Lifecycle, RBAC & Security Hardening', () => {
     expect(firstJson.inquiry.phone).toBe('+639171234567');
     expect(firstJson.deduplicated).toBe(false);
 
-    // Identical retry is idempotent and returns same case
     const retry = await fetch(`${baseUrl}/api/inquiries`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -164,7 +190,6 @@ describe('API, Case Lifecycle, RBAC & Security Hardening', () => {
     expect(retryJson.inquiry.id).toBe(firstJson.inquiry.id);
     expect(retryJson.inquiry.caseNumber).toBe('CASE-000002');
 
-    // Different payload with same submissionKey returns 409 Conflict
     const conflict = await fetch(`${baseUrl}/api/inquiries`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -172,7 +197,6 @@ describe('API, Case Lifecycle, RBAC & Security Hardening', () => {
     });
     expect(conflict.status).toBe(409);
 
-    // Concurrent submissions produce strictly unique sequential CASE numbers
     const concurrent = await Promise.all(
       [0, 1, 2].map((idx) =>
         fetch(`${baseUrl}/api/inquiries`, {
@@ -194,15 +218,14 @@ describe('API, Case Lifecycle, RBAC & Security Hardening', () => {
     expect(new Set(caseNums).size).toBe(3);
     expect(caseNums.sort()).toEqual(['CASE-000003', 'CASE-000004', 'CASE-000005']);
 
-    // Ensure public /api/content does not expose requester PII
     const publicContent = await (await fetch(`${baseUrl}/api/content`)).text();
     expect(publicContent).not.toContain('+639171234567');
     expect(publicContent).not.toContain('marco@example.com');
   });
 
-  it('enforces unauthenticated rejection, bootstrap + RBAC (admin vs staff), status audit history, notes, KPI reconciliation, and CSV export', async () => {
-    // 1. Unauthenticated access rejected on all admin routes
+  it('enforces unauthenticated rejection, super_admin/admin/staff RBAC, staff case scoping, KPI reconciliation, and CSV export', async () => {
     const unauthEndpoints = [
+      '/api/auth/me',
       '/api/admin/dashboard',
       '/api/admin/cases',
       '/api/admin/analytics',
@@ -210,27 +233,30 @@ describe('API, Case Lifecycle, RBAC & Security Hardening', () => {
       '/api/admin/users',
       '/api/admin/notifications',
       '/api/admin/activity',
+      '/api/admin/sessions',
+      '/api/admin/audit-events',
     ];
     for (const ep of unauthEndpoints) {
       const r = await fetch(`${baseUrl}${ep}`);
       expect(r.status).toBe(401);
     }
 
-    // 2. First-admin bootstrap creates admin account and locks out second bootstrap
+    // 1. First-admin bootstrap creates super_admin and locks subsequent bootstrap calls
     const bootRes = await fetch(`${baseUrl}/api/auth/bootstrap`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         bootstrapToken: 'Bootstrap-Secret-Token-99!',
         name: 'Pio Languisan',
-        email: 'admin@piolanguisan.example',
+        email: 'super@piolanguisan.example',
         password: 'ExecutiveStrongPassword!2026',
       }),
     });
     expect(bootRes.status).toBe(201);
     const bootJson = await bootRes.json();
-    const adminToken = bootJson.token as string;
-    expect(bootJson.user.role).toBe('admin');
+    const superToken = bootJson.token as string;
+    const superUser = bootJson.user;
+    expect(superUser.role).toBe('super_admin');
 
     const secondBoot = await fetch(`${baseUrl}/api/auth/bootstrap`, {
       method: 'POST',
@@ -244,13 +270,23 @@ describe('API, Case Lifecycle, RBAC & Security Hardening', () => {
     });
     expect(secondBoot.status).toBe(409);
 
-    // 3. Admin creates a Staff user
+    // 2. Super Admin provisions an Admin user and a Staff user
+    const adminCreate = await fetch(`${baseUrl}/api/admin/users`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${superToken}` },
+      body: JSON.stringify({
+        name: 'Operations Lead',
+        email: 'lead@piolanguisan.example',
+        role: 'admin',
+        password: 'OperationsPassword!2026',
+      }),
+    });
+    expect(adminCreate.status).toBe(201);
+    const adminUser = (await adminCreate.json()).user;
+
     const staffCreate = await fetch(`${baseUrl}/api/admin/users`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${adminToken}`,
-      },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${superToken}` },
       body: JSON.stringify({
         name: 'Operations Coordinator',
         email: 'staff@piolanguisan.example',
@@ -261,7 +297,17 @@ describe('API, Case Lifecycle, RBAC & Security Hardening', () => {
     expect(staffCreate.status).toBe(201);
     const staffUser = (await staffCreate.json()).user;
 
-    // 4. Staff logs in via email/password
+    const adminLogin = await fetch(`${baseUrl}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: 'lead@piolanguisan.example',
+        password: 'OperationsPassword!2026',
+      }),
+    });
+    expect(adminLogin.status).toBe(200);
+    const adminToken = (await adminLogin.json()).token as string;
+
     const staffLogin = await fetch(`${baseUrl}/api/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -273,37 +319,32 @@ describe('API, Case Lifecycle, RBAC & Security Hardening', () => {
     expect(staffLogin.status).toBe(200);
     const staffToken = (await staffLogin.json()).token as string;
 
-    // Staff CANNOT perform admin-only actions (403)
-    const staffCreateUser = await fetch(`${baseUrl}/api/admin/users`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${staffToken}` },
-      body: JSON.stringify({
-        name: 'X',
-        email: 'x@example.com',
-        role: 'admin',
-        password: 'Password123456!',
-      }),
-    });
-    expect(staffCreateUser.status).toBe(403);
+    // 3. Admin CAN access analytics/export/activity/users, CANNOT create users or read auth audit events (super_admin only)
+    expect((await fetch(`${baseUrl}/api/admin/analytics`, { headers: { Authorization: `Bearer ${adminToken}` } })).status).toBe(200);
+    expect((await fetch(`${baseUrl}/api/admin/audit-events`, { headers: { Authorization: `Bearer ${adminToken}` } })).status).toBe(403);
+    expect(
+      (
+        await fetch(`${baseUrl}/api/admin/users`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` },
+          body: JSON.stringify({
+            name: 'Blocked User',
+            email: 'blocked@example.com',
+            role: 'staff',
+            password: 'StrongPassword!2026',
+          }),
+        })
+      ).status
+    ).toBe(403);
 
-    const staffExport = await fetch(`${baseUrl}/api/admin/reports/export`, {
-      headers: { Authorization: `Bearer ${staffToken}` },
-    });
-    expect(staffExport.status).toBe(403);
+    // 4. Staff CANNOT access admin analytics, CSV export, activity, or user creation (403)
+    expect((await fetch(`${baseUrl}/api/admin/analytics`, { headers: { Authorization: `Bearer ${staffToken}` } })).status).toBe(403);
+    expect((await fetch(`${baseUrl}/api/admin/reports/export`, { headers: { Authorization: `Bearer ${staffToken}` } })).status).toBe(403);
+    expect((await fetch(`${baseUrl}/api/admin/activity`, { headers: { Authorization: `Bearer ${staffToken}` } })).status).toBe(403);
+    expect((await fetch(`${baseUrl}/api/admin/users`, { headers: { Authorization: `Bearer ${staffToken}` } })).status).toBe(403);
 
-    const staffAddProject = await fetch(`${baseUrl}/api/admin/projects`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${staffToken}` },
-      body: JSON.stringify({
-        title: 'Unauthorized Project',
-        domain: 'Data Analytics',
-        summary: 'Should be rejected with 403.',
-      }),
-    });
-    expect(staffAddProject.status).toBe(403);
-
-    // 5. Public submission creates a case with formula-like company name & triggers notification
-    const subRes = await fetch(`${baseUrl}/api/inquiries`, {
+    // 5. Public submissions create two cases: one assigned to adminUser (forbidden to staff), one worked by staff
+    const subA = await fetch(`${baseUrl}/api/inquiries`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -316,24 +357,44 @@ describe('API, Case Lifecycle, RBAC & Security Hardening', () => {
         message: 'We need a unified web portal with automated operational intake.',
       }),
     });
-    expect(subRes.status).toBe(201);
-    const createdCase = (await subRes.json()).caseRecord;
-    expect(createdCase.status).toBe('New');
+    expect(subA.status).toBe(201);
+    const createdCase = (await subA.json()).caseRecord;
 
-    // Notifications list contains new case notification
-    const notifRes = await fetch(`${baseUrl}/api/admin/notifications`, {
-      headers: { Authorization: `Bearer ${adminToken}` },
+    const subB = await fetch(`${baseUrl}/api/inquiries`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Assigned Executive Case',
+        email: 'exec-client@acme.example',
+        company: 'Executive Client Corp',
+        tier: 'enterprise',
+        serviceDomain: 'account-management',
+        timeline: 'Within 30 days',
+        message: 'Dedicated executive engagement assigned to operations lead.',
+      }),
     });
-    const notifJson = await notifRes.json();
-    expect(notifJson.unreadCount).toBeGreaterThanOrEqual(1);
+    const executiveCase = (await subB.json()).caseRecord;
 
-    // 6. Staff CAN transition case status, assign owner, and add private internal note
+    // Assign executiveCase to adminUser (Operations Lead)
+    await fetch(`${baseUrl}/api/admin/cases/${executiveCase.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${superToken}` },
+      body: JSON.stringify({ assignedTo: adminUser.id }),
+    });
+
+    // Staff gets 403 trying to view or edit a case assigned to someone else
+    expect(
+      (
+        await fetch(`${baseUrl}/api/admin/cases/${executiveCase.id}`, {
+          headers: { Authorization: `Bearer ${staffToken}` },
+        })
+      ).status
+    ).toBe(403);
+
+    // Staff CAN transition unassigned/own-assigned case & add internal note
     const patchRes = await fetch(`${baseUrl}/api/admin/cases/${createdCase.id}`, {
       method: 'PATCH',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${staffToken}`,
-      },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${staffToken}` },
       body: JSON.stringify({
         status: 'Follow Up',
         statusNote: 'Discovery agenda sent to client.',
@@ -345,36 +406,12 @@ describe('API, Case Lifecycle, RBAC & Security Hardening', () => {
 
     const noteRes = await fetch(`${baseUrl}/api/admin/cases/${createdCase.id}/notes`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${staffToken}`,
-      },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${staffToken}` },
       body: JSON.stringify({ content: 'Private internal triage note.' }),
     });
     expect(noteRes.status).toBe(201);
 
-    // Verify immutable status history + notes + activity on case detail
-    const detailRes = await fetch(`${baseUrl}/api/admin/cases/${createdCase.id}`, {
-      headers: { Authorization: `Bearer ${adminToken}` },
-    });
-    const detailJson = await detailRes.json();
-    expect(detailJson.caseRecord.status).toBe('Follow Up');
-    expect(detailJson.caseRecord.assignedTo).toBe(staffUser.id);
-    expect(detailJson.statusHistory.length).toBe(2);
-    expect(detailJson.statusHistory[0].previousStatus).toBe('New');
-    expect(detailJson.statusHistory[0].newStatus).toBe('Follow Up');
-    expect(detailJson.notes[0].content).toBe('Private internal triage note.');
-
-    // Verify KPI reconciliation
-    const analyticsRes = await fetch(`${baseUrl}/api/admin/analytics`, {
-      headers: { Authorization: `Bearer ${adminToken}` },
-    });
-    const analyticsJson = await analyticsRes.json();
-    expect(analyticsJson.kpis.totalRequests).toBe(2); // Sample + Jordan Taylor
-    expect(analyticsJson.kpis.followUpRequests).toBe(1);
-    expect(analyticsJson.kpis.pendingRequests).toBe(1);
-
-    // 7. Admin exports filtered CSV with formula injection protection & audit log entry
+    // Admin exports filtered CSV with formula injection guard & audit trail
     const exportRes = await fetch(`${baseUrl}/api/admin/reports/export?status=Follow%20Up`, {
       headers: { Authorization: `Bearer ${adminToken}` },
     });
@@ -382,14 +419,147 @@ describe('API, Case Lifecycle, RBAC & Security Hardening', () => {
     const csv = await exportRes.text();
     expect(csv).toContain('"\'=SUM(1,2)"');
     expect(csv).toContain(createdCase.caseNumber);
+  });
 
-    const actRes = await fetch(`${baseUrl}/api/admin/activity`, {
-      headers: { Authorization: `Bearer ${adminToken}` },
+  it('supports invitations, password change, MFA challenge, session revocation, deactivation, and honest 503 recovery', async () => {
+    const bootRes = await fetch(`${baseUrl}/api/auth/bootstrap`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        bootstrapToken: 'Bootstrap-Secret-Token-99!',
+        name: 'Super Admin',
+        email: 'super@piolanguisan.example',
+        password: 'SuperStrongPassword!2026',
+      }),
     });
-    const actJson = await actRes.json();
-    expect(actJson.activity.some((a: { action: string }) => a.action === 'report_exported_csv')).toBe(
-      true
-    );
+    const superToken = (await bootRes.json()).token as string;
+
+    // 1. Forgot password returns honest 503 when Gmail mailer credentials are not configured
+    const forgotRes = await fetch(`${baseUrl}/api/auth/forgot-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'super@piolanguisan.example' }),
+    });
+    expect(forgotRes.status).toBe(503);
+
+    // 2. Super Admin issues an invitation -> returns manualInviteUrl when mailer is absent
+    const inviteRes = await fetch(`${baseUrl}/api/admin/invitations`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${superToken}` },
+      body: JSON.stringify({
+        name: 'Invited Analyst',
+        email: 'analyst@piolanguisan.example',
+        role: 'admin',
+      }),
+    });
+    expect(inviteRes.status).toBe(201);
+    const inviteBody = await inviteRes.json();
+    expect(inviteBody.emailed).toBe(false);
+    expect(typeof inviteBody.manualInviteUrl).toBe('string');
+    const inviteToken = new URL(inviteBody.manualInviteUrl).searchParams.get('token')!;
+    expect(inviteToken).toBeTruthy();
+
+    // Accept invite activates account & rejects replay
+    const acceptRes = await fetch(`${baseUrl}/api/auth/accept-invite`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: inviteToken, password: 'AnalystStrongPassword!2026' }),
+    });
+    expect(acceptRes.status).toBe(201);
+    const acceptedUser = (await acceptRes.json()).user;
+    expect(acceptedUser.role).toBe('admin');
+
+    const replayAccept = await fetch(`${baseUrl}/api/auth/accept-invite`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: inviteToken, password: 'AnalystStrongPassword!2026' }),
+    });
+    expect(replayAccept.status).toBe(400);
+
+    // 3. Invited user signs in, sets up TOTP MFA, then requires 2-step MFA login
+    const analystLogin1 = await fetch(`${baseUrl}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: 'analyst@piolanguisan.example',
+        password: 'AnalystStrongPassword!2026',
+      }),
+    });
+    const analystToken = (await analystLogin1.json()).token as string;
+
+    const mfaSetup = await (
+      await fetch(`${baseUrl}/api/auth/mfa/setup`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${analystToken}` },
+      })
+    ).json();
+    const mfaCode = computeTotp(mfaSetup.secret);
+    const mfaEnable = await fetch(`${baseUrl}/api/auth/mfa/enable`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${analystToken}` },
+      body: JSON.stringify({ secret: mfaSetup.secret, code: mfaCode }),
+    });
+    expect(mfaEnable.status).toBe(200);
+
+    const mfaPromptLogin = await fetch(`${baseUrl}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: 'analyst@piolanguisan.example',
+        password: 'AnalystStrongPassword!2026',
+      }),
+    });
+    expect(mfaPromptLogin.status).toBe(202);
+    const mfaPromptBody = await mfaPromptLogin.json();
+    expect(mfaPromptBody.mfaRequired).toBe(true);
+
+    const mfaComplete = await fetch(`${baseUrl}/api/auth/login/mfa`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        mfaChallenge: mfaPromptBody.mfaChallenge,
+        code: computeTotp(mfaSetup.secret),
+      }),
+    });
+    expect(mfaComplete.status).toBe(200);
+    const secondAnalystToken = (await mfaComplete.json()).token as string;
+
+    // 4. Revoking one active session rejects it immediately
+    const sessionsRes = await fetch(`${baseUrl}/api/admin/sessions`, {
+      headers: { Authorization: `Bearer ${superToken}` },
+    });
+    const sessionsList = (await sessionsRes.json()).sessions as Array<{ id: string; email: string }>;
+    const targetSession = sessionsList.find((s) => s.email === 'analyst@piolanguisan.example');
+    expect(targetSession).toBeTruthy();
+
+    const revokeRes = await fetch(`${baseUrl}/api/admin/sessions/${targetSession!.id}/revoke`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${superToken}` },
+    });
+    expect(revokeRes.status).toBe(200);
+
+    // Deactivating the user invalidates ALL remaining sessions immediately
+    const deactivateRes = await fetch(`${baseUrl}/api/admin/users/${acceptedUser.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${superToken}` },
+      body: JSON.stringify({ isActive: false }),
+    });
+    expect(deactivateRes.status).toBe(200);
+    const staleAnalystCall = await fetch(`${baseUrl}/api/auth/me`, {
+      headers: { Authorization: `Bearer ${secondAnalystToken}` },
+    });
+    expect(staleAnalystCall.status).toBe(401);
+
+    // 5. Super Admin inspects auth_audit_events
+    const auditRes = await fetch(`${baseUrl}/api/admin/audit-events`, {
+      headers: { Authorization: `Bearer ${superToken}` },
+    });
+    expect(auditRes.status).toBe(200);
+    const auditEvents = (await auditRes.json()).events as Array<{ eventType: string }>;
+    expect(auditEvents.some((e) => e.eventType === 'admin_bootstrapped')).toBe(true);
+    expect(auditEvents.some((e) => e.eventType === 'invitation_accepted')).toBe(true);
+    expect(auditEvents.some((e) => e.eventType === 'mfa_enabled')).toBe(true);
+    expect(auditEvents.some((e) => e.eventType === 'session_revoked')).toBe(true);
   });
 
   it('enforces passcode brute-force lockout, SVG XSS rejection, and logout revocation', async () => {

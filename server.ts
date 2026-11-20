@@ -3,9 +3,11 @@ import {
   consultationInbox,
   getConsultationMailerConfig,
   runConsultationMailer,
+  sendTransactionalEmail,
 } from './consultation.ts';
 import {
   getCaseRepository,
+  hashSecretToken,
   resetRepositoryForTests,
   verifyPassword,
   type CaseActor,
@@ -44,12 +46,15 @@ import type {
 } from './src/types.ts';
 
 interface SessionRecord {
+  id: string;
   token: string;
+  tokenHash: string;
   csrfToken: string;
   userId: string | null;
   email: string;
   name: string;
   role: AdminRole;
+  sessionVersion: number;
   expiresAt: number;
 }
 
@@ -72,6 +77,8 @@ const VALID_PRIORITIES: CasePriority[] = ['Low', 'Normal', 'High', 'Urgent'];
 const ALLOWED_RASTER_DATA_URL_RE = /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/=]+)$/;
 const MAX_UPLOAD_BYTES = 2 * 1024 * 1024;
 const ADMIN_TOKEN_TTL_MS = 1000 * 60 * 60 * 4;
+const RECOVERY_TOKEN_TTL_MS = 1000 * 60 * 30;
+const INVITATION_TOKEN_TTL_MS = 1000 * 60 * 60 * 72;
 const GEMINI_TIMEOUT_MS = 20000;
 const SESSION_COOKIE_NAME = 'pl_session';
 const CSRF_COOKIE_NAME = 'pl_csrf';
@@ -231,20 +238,43 @@ function parseCookies(cookieHeader: string | undefined): Record<string, string> 
   return result;
 }
 
-function createSession(actor: CaseActor): SessionRecord {
+async function createSession(
+  actor: CaseActor & { sessionVersion?: number },
+  req: Request
+): Promise<SessionRecord> {
   pruneExpiredSessions();
+  const id = `ses-${crypto.randomUUID().slice(0, 12)}`;
   const token = crypto.randomBytes(32).toString('hex');
+  const tokenHash = hashSecretToken(token);
   const csrfToken = crypto.randomBytes(24).toString('hex');
+  const expiresAt = Date.now() + ADMIN_TOKEN_TTL_MS;
   const session: SessionRecord = {
+    id,
     token,
+    tokenHash,
     csrfToken,
     userId: actor.id,
     email: actor.email,
     name: actor.name,
     role: actor.role,
-    expiresAt: Date.now() + ADMIN_TOKEN_TTL_MS,
+    sessionVersion: actor.sessionVersion ?? 1,
+    expiresAt,
   };
   activeSessions.set(token, session);
+  const repo = getCaseRepository();
+  await repo.createSessionRecord({
+    id,
+    userId: actor.id,
+    tokenHash,
+    csrfToken,
+    role: actor.role,
+    email: actor.email,
+    name: actor.name,
+    userAgent: String(req.headers['user-agent'] || '').slice(0, 200),
+    ipAddress: getClientIp(req),
+    sessionVersion: session.sessionVersion,
+    expiresAt: new Date(expiresAt).toISOString(),
+  });
   return session;
 }
 
@@ -269,53 +299,114 @@ function clearSessionCookies(req: Request, res: Response): void {
   ]);
 }
 
-function extractSessionFromRequest(req: Request): { session: SessionRecord | null; viaCookie: boolean } {
+async function extractSessionFromRequest(
+  req: Request
+): Promise<{ session: SessionRecord | null; viaCookie: boolean; expired: boolean }> {
   pruneExpiredSessions();
   const authHeader = req.headers.authorization || '';
+  let rawToken: string | null = null;
+  let viaCookie = false;
+
   if (authHeader.startsWith('Bearer ')) {
-    const bearer = authHeader.slice(7).trim();
-    if (bearer) {
-      const found = activeSessions.get(bearer);
-      if (found && Date.now() <= found.expiresAt) {
-        return { session: found, viaCookie: false };
-      }
-    }
-    return { session: null, viaCookie: false };
-  }
-
-  const cookies = parseCookies(req.headers.cookie);
-  const signedCookie = cookies[SESSION_COOKIE_NAME];
-  if (signedCookie) {
-    const rawToken = verifySignedToken(signedCookie);
-    if (rawToken) {
-      const found = activeSessions.get(rawToken);
-      if (found && Date.now() <= found.expiresAt) {
-        return { session: found, viaCookie: true };
-      }
+    rawToken = authHeader.slice(7).trim() || null;
+  } else {
+    const cookies = parseCookies(req.headers.cookie);
+    const signedCookie = cookies[SESSION_COOKIE_NAME];
+    if (signedCookie) {
+      rawToken = verifySignedToken(signedCookie);
+      viaCookie = true;
     }
   }
 
-  return { session: null, viaCookie: false };
+  if (!rawToken) {
+    return { session: null, viaCookie, expired: false };
+  }
+
+  const repo = getCaseRepository();
+  const tokenHash = hashSecretToken(rawToken);
+  const storedSession = await repo.getSessionByTokenHash(tokenHash);
+  if (!storedSession) {
+    activeSessions.delete(rawToken);
+    return { session: null, viaCookie, expired: false };
+  }
+  if (storedSession.revokedAt || Date.parse(storedSession.expiresAt) <= Date.now()) {
+    activeSessions.delete(rawToken);
+    return { session: null, viaCookie, expired: true };
+  }
+
+  let resolvedRole: AdminRole = storedSession.role;
+  let resolvedEmail = storedSession.email;
+  let resolvedName = storedSession.name;
+  let resolvedVersion = storedSession.sessionVersion;
+
+  if (storedSession.userId) {
+    const user = await repo.getUserById(storedSession.userId);
+    if (!user || !user.isActive || (user.sessionVersion ?? 1) !== storedSession.sessionVersion) {
+      activeSessions.delete(rawToken);
+      return { session: null, viaCookie, expired: true };
+    }
+    resolvedRole = user.role;
+    resolvedEmail = user.email;
+    resolvedName = user.name;
+    resolvedVersion = user.sessionVersion ?? 1;
+  }
+
+  const hydrated: SessionRecord = {
+    id: storedSession.id,
+    token: rawToken,
+    tokenHash: storedSession.tokenHash,
+    csrfToken: storedSession.csrfToken,
+    userId: storedSession.userId,
+    email: resolvedEmail,
+    name: resolvedName,
+    role: resolvedRole,
+    sessionVersion: resolvedVersion,
+    expiresAt: Date.parse(storedSession.expiresAt),
+  };
+  activeSessions.set(rawToken, hydrated);
+  return { session: hydrated, viaCookie, expired: false };
 }
 
-function requireAuth(req: AuthenticatedRequest, res: Response, next: NextFunction): void {
-  const { session, viaCookie } = extractSessionFromRequest(req);
-  if (!session) {
-    res.status(401).json({ error: 'Authentication required.' });
-    return;
-  }
-
-  if (viaCookie && !['GET', 'HEAD', 'OPTIONS'].includes(req.method.toUpperCase())) {
-    const headerCsrf = String(req.headers['x-csrf-token'] || '');
-    if (!headerCsrf || !timingSafeMatch(headerCsrf, session.csrfToken)) {
-      res.status(403).json({ error: 'Invalid or missing CSRF verification token.' });
+async function requireAuth(
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const { session, viaCookie, expired } = await extractSessionFromRequest(req);
+    if (!session) {
+      if (viaCookie) clearSessionCookies(req, res);
+      res.status(401).json({
+        error: expired
+          ? 'Your administrator session has expired or was revoked. Please sign in again.'
+          : 'Authentication required.',
+        code: expired ? 'SESSION_EXPIRED' : 'UNAUTHENTICATED',
+      });
       return;
     }
-  }
 
-  req.authSession = session;
-  req.authViaCookie = viaCookie;
-  next();
+    if (viaCookie && !['GET', 'HEAD', 'OPTIONS'].includes(req.method.toUpperCase())) {
+      const headerCsrf = String(req.headers['x-csrf-token'] || '');
+      if (!headerCsrf || !timingSafeMatch(headerCsrf, session.csrfToken)) {
+        res.status(403).json({ error: 'Invalid or missing CSRF verification token.' });
+        return;
+      }
+    }
+
+    req.authSession = session;
+    req.authViaCookie = viaCookie;
+    next();
+  } catch {
+    res.status(503).json({ error: 'Authentication verification service unavailable.' });
+  }
+}
+
+function isAdminOrSuper(role: AdminRole): boolean {
+  return role === 'super_admin' || role === 'admin';
+}
+
+function isSuperAdmin(role: AdminRole): boolean {
+  return role === 'super_admin';
 }
 
 function requireAdminRole(req: AuthenticatedRequest, res: Response, next: NextFunction): void {
@@ -323,8 +414,20 @@ function requireAdminRole(req: AuthenticatedRequest, res: Response, next: NextFu
     res.status(401).json({ error: 'Authentication required.' });
     return;
   }
-  if (req.authSession.role !== 'admin') {
+  if (!isAdminOrSuper(req.authSession.role)) {
     res.status(403).json({ error: 'Administrator privileges are required for this action.' });
+    return;
+  }
+  next();
+}
+
+function requireSuperAdminRole(req: AuthenticatedRequest, res: Response, next: NextFunction): void {
+  if (!req.authSession) {
+    res.status(401).json({ error: 'Authentication required.' });
+    return;
+  }
+  if (!isSuperAdmin(req.authSession.role)) {
+    res.status(403).json({ error: 'Super Administrator privileges are required for this action.' });
     return;
   }
   next();
@@ -337,6 +440,122 @@ function sessionToActor(session: SessionRecord): CaseActor {
     name: session.name,
     role: session.role,
   };
+}
+
+// RFC 4648 Base32 & RFC 6238 TOTP helpers (optional MFA)
+const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+function generateBase32Secret(bytes = 20): string {
+  const buf = crypto.randomBytes(bytes);
+  let bits = 0;
+  let value = 0;
+  let out = '';
+  for (const byte of buf) {
+    value = (value << 8) | byte;
+    bits += 8;
+    while (bits >= 5) {
+      out += BASE32_ALPHABET[(value >>> (bits - 5)) & 31];
+      bits -= 5;
+    }
+  }
+  if (bits > 0) {
+    out += BASE32_ALPHABET[(value << (5 - bits)) & 31];
+  }
+  return out;
+}
+
+function decodeBase32(secret: string): Buffer {
+  const clean = secret.toUpperCase().replace(/[^A-Z2-7]/g, '');
+  let bits = 0;
+  let value = 0;
+  const out: number[] = [];
+  for (const ch of clean) {
+    const idx = BASE32_ALPHABET.indexOf(ch);
+    if (idx < 0) continue;
+    value = (value << 5) | idx;
+    bits += 5;
+    if (bits >= 8) {
+      out.push((value >>> (bits - 8)) & 0xff);
+      bits -= 8;
+    }
+  }
+  return Buffer.from(out);
+}
+
+function verifyTotpCode(secret: string, code: string): boolean {
+  const cleanCode = code.replace(/\s+/g, '');
+  if (!/^\d{6}$/.test(cleanCode)) return false;
+  const key = decodeBase32(secret);
+  const currentStep = Math.floor(Date.now() / 30000);
+  for (const delta of [-1, 0, 1]) {
+    const stepBuf = Buffer.alloc(8);
+    stepBuf.writeBigUInt64BE(BigInt(currentStep + delta));
+    const hmac = crypto.createHmac('sha1', key).update(stepBuf).digest();
+    const offset = hmac[hmac.length - 1] & 0x0f;
+    const binCode =
+      ((hmac[offset] & 0x7f) << 24) |
+      ((hmac[offset + 1] & 0xff) << 16) |
+      ((hmac[offset + 2] & 0xff) << 8) |
+      (hmac[offset + 3] & 0xff);
+    const otp = String(binCode % 1000000).padStart(6, '0');
+    if (timingSafeMatch(cleanCode, otp)) return true;
+  }
+  return false;
+}
+
+function signMfaChallenge(userId: string): string {
+  const payload = Buffer.from(
+    JSON.stringify({ userId, exp: Date.now() + 5 * 60 * 1000 })
+  ).toString('base64url');
+  const sig = crypto.createHmac('sha256', getSessionSecret()).update(payload).digest('base64url');
+  return `${payload}.${sig}`;
+}
+
+function verifyMfaChallenge(token: string): string | null {
+  const dot = token.lastIndexOf('.');
+  if (dot <= 0) return null;
+  const payload = token.slice(0, dot);
+  const sig = token.slice(dot + 1);
+  const expectedSig = crypto
+    .createHmac('sha256', getSessionSecret())
+    .update(payload)
+    .digest('base64url');
+  if (!timingSafeMatch(sig, expectedSig)) return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(payload, 'base64url').toString('utf-8')) as {
+      userId?: string;
+      exp?: number;
+    };
+    if (!parsed.userId || !parsed.exp || Date.now() > parsed.exp) return null;
+    return parsed.userId;
+  } catch {
+    return null;
+  }
+}
+
+function validateStrongPassword(password: string): string | null {
+  if (typeof password !== 'string' || password.length < 12) {
+    return 'Password must be at least 12 characters long.';
+  }
+  if (password.length > 128) {
+    return 'Password must be 128 characters or fewer.';
+  }
+  if (!/[a-z]/.test(password) || !/[A-Z]/.test(password) || !/[0-9!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(password)) {
+    return 'Password must include uppercase, lowercase, and at least one number or special character.';
+  }
+  return null;
+}
+
+function resolvePublicAppBaseUrl(req: Request, allowedOrigins: string[]): string {
+  const configured = (process.env.PUBLIC_APP_URL || '').trim().replace(/\/+$/, '');
+  if (configured) return configured;
+  const origin = typeof req.headers.origin === 'string' ? req.headers.origin.trim() : '';
+  if (origin && allowedOrigins.includes(origin)) {
+    const isGhPages = origin === 'https://ybtech7.github.io';
+    return isGhPages ? `${origin}/PioOrlyLanguisan` : origin;
+  }
+  const host = req.get('host');
+  const proto = req.secure || req.headers['x-forwarded-proto'] === 'https' ? 'https' : 'http';
+  return host ? `${proto}://${host}` : 'https://ybtech7.github.io/PioOrlyLanguisan';
 }
 
 function normalizeStatusInput(value: unknown): CaseStatus | null {
@@ -810,7 +1029,7 @@ export function createApiApp(): Express {
   });
 
   // -------------------------------------------------------------------------
-  // Authentication & Bootstrap (Email/Password + Server Passcode Fallback)
+  // Authentication, Bootstrap, Recovery, Invitations, MFA & Sessions
   // -------------------------------------------------------------------------
   app.get('/api/auth/status', async (_req, res) => {
     const repo = getCaseRepository();
@@ -826,21 +1045,26 @@ export function createApiApp(): Express {
     });
   });
 
-  app.get('/api/auth/me', requireAuth, (req: AuthenticatedRequest, res) => {
+  app.get('/api/auth/me', requireAuth, async (req: AuthenticatedRequest, res) => {
     const s = req.authSession!;
+    const repo = getCaseRepository();
+    const user = s.userId ? await repo.getUserById(s.userId) : null;
     res.json({
       user: {
         id: s.userId,
         email: s.email,
         name: s.name,
         role: s.role,
+        mfaEnabled: Boolean(user?.mfaEnabled),
       },
       csrfToken: s.csrfToken,
+      expiresAt: s.expiresAt,
     });
   });
 
   app.post('/api/auth/bootstrap', async (req, res) => {
     const repo = getCaseRepository();
+    const ip = getClientIp(req);
     const hasAdmin = await repo.hasAnyAdminUser();
     if (hasAdmin) {
       res.status(409).json({ error: 'An administrator account already exists. Please sign in.' });
@@ -860,13 +1084,19 @@ export function createApiApp(): Express {
       return;
     }
 
-    const ip = getClientIp(req);
     if (checkLoginLockout(ip, res)) return;
 
     const { bootstrapToken, email, name, password } = req.body ?? {};
     const suppliedToken = typeof bootstrapToken === 'string' ? bootstrapToken.trim() : '';
     if (!suppliedToken || !timingSafeMatch(suppliedToken, expectedSecret)) {
       recordLoginFailure(ip);
+      await repo.recordAuthAuditEvent({
+        userId: null,
+        actorEmail: typeof email === 'string' ? email.trim().toLowerCase() : '',
+        eventType: 'bootstrap_failed',
+        result: 'failure',
+        ipAddress: ip,
+      });
       res.status(401).json({ error: 'Invalid bootstrap verification token.' });
       return;
     }
@@ -883,8 +1113,9 @@ export function createApiApp(): Express {
       res.status(400).json({ error: 'Administrator name must be between 2 and 80 characters.' });
       return;
     }
-    if (cleanPassword.length < 12) {
-      res.status(400).json({ error: 'Password must be at least 12 characters long.' });
+    const pwError = validateStrongPassword(cleanPassword);
+    if (pwError) {
+      res.status(400).json({ error: pwError });
       return;
     }
 
@@ -893,29 +1124,39 @@ export function createApiApp(): Express {
         email: cleanEmail,
         name: cleanName,
         password: cleanPassword,
-        role: 'admin',
+        role: 'super_admin',
       });
       await repo.recordUserLogin(created.id);
       const actor: CaseActor = {
         id: created.id,
         email: created.email,
         name: created.name,
-        role: 'admin',
+        role: 'super_admin',
       };
-      await repo.recordGlobalActivity(actor, 'admin_bootstrapped', { email: created.email });
+      await repo.recordGlobalActivity(actor, 'super_admin_bootstrapped', { email: created.email });
+      await repo.recordAuthAuditEvent({
+        userId: created.id,
+        actorEmail: created.email,
+        eventType: 'admin_bootstrapped',
+        result: 'success',
+        ipAddress: ip,
+        metadata: { role: 'super_admin' },
+      });
       loginFailureBuckets.delete(ip);
 
-      const session = createSession(actor);
+      const session = await createSession({ ...actor, sessionVersion: 1 }, req);
       setSessionCookies(req, res, session);
       res.status(201).json({
         token: session.token,
         csrfToken: session.csrfToken,
         expiresInMs: ADMIN_TOKEN_TTL_MS,
+        expiresAt: session.expiresAt,
         user: {
           id: created.id,
           email: created.email,
           name: created.name,
           role: created.role,
+          mfaEnabled: false,
         },
       });
     } catch {
@@ -925,7 +1166,17 @@ export function createApiApp(): Express {
 
   app.post('/api/auth/login', async (req, res) => {
     const ip = getClientIp(req);
-    if (checkLoginLockout(ip, res)) return;
+    const repo = getCaseRepository();
+    if (checkLoginLockout(ip, res)) {
+      await repo.recordAuthAuditEvent({
+        userId: null,
+        actorEmail: typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '',
+        eventType: 'login_rate_limited',
+        result: 'blocked',
+        ipAddress: ip,
+      });
+      return;
+    }
 
     const { email, password } = req.body ?? {};
     const cleanEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
@@ -936,47 +1187,157 @@ export function createApiApp(): Express {
       return;
     }
 
-    const repo = getCaseRepository();
     const user = await repo.getUserByEmail(cleanEmail);
-    if (!user || !user.isActive || !verifyPassword(cleanPassword, user.passwordHash)) {
+    if (!user || !verifyPassword(cleanPassword, user.passwordHash)) {
       recordLoginFailure(ip);
+      await repo.recordAuthAuditEvent({
+        userId: user?.id ?? null,
+        actorEmail: cleanEmail,
+        eventType: 'login_failed',
+        result: 'failure',
+        ipAddress: ip,
+      });
       res.status(401).json({ error: 'Invalid email or password.' });
+      return;
+    }
+
+    if (!user.isActive) {
+      await repo.recordAuthAuditEvent({
+        userId: user.id,
+        actorEmail: cleanEmail,
+        eventType: 'login_disabled_account',
+        result: 'blocked',
+        ipAddress: ip,
+      });
+      res.status(403).json({
+        error: 'This account has been deactivated. Contact a Super Administrator for access.',
+      });
+      return;
+    }
+
+    if (user.mfaEnabled && user.mfaSecret) {
+      loginFailureBuckets.delete(ip);
+      res.status(202).json({
+        mfaRequired: true,
+        mfaChallenge: signMfaChallenge(user.id),
+      });
       return;
     }
 
     loginFailureBuckets.delete(ip);
     await repo.recordUserLogin(user.id);
-    const session = createSession({
-      id: user.id,
-      email: user.email,
-      name: user.name,
-      role: user.role,
+    await repo.recordAuthAuditEvent({
+      userId: user.id,
+      actorEmail: user.email,
+      eventType: 'login_succeeded',
+      result: 'success',
+      ipAddress: ip,
+      metadata: { role: user.role },
     });
+
+    const session = await createSession(
+      {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        sessionVersion: user.sessionVersion ?? 1,
+      },
+      req
+    );
     setSessionCookies(req, res, session);
     res.json({
       token: session.token,
       csrfToken: session.csrfToken,
       expiresInMs: ADMIN_TOKEN_TTL_MS,
+      expiresAt: session.expiresAt,
       user: {
         id: user.id,
         email: user.email,
         name: user.name,
         role: user.role,
+        mfaEnabled: Boolean(user.mfaEnabled),
       },
     });
   });
 
-  app.post('/api/admin/login', (req, res) => {
+  app.post('/api/auth/login/mfa', async (req, res) => {
+    const ip = getClientIp(req);
+    const repo = getCaseRepository();
+    if (checkLoginLockout(ip, res)) return;
+
+    const { mfaChallenge, code } = req.body ?? {};
+    const userId = typeof mfaChallenge === 'string' ? verifyMfaChallenge(mfaChallenge) : null;
+    if (!userId) {
+      res.status(401).json({ error: 'MFA verification challenge is invalid or expired.' });
+      return;
+    }
+    const user = await repo.getUserById(userId);
+    if (!user || !user.isActive || !user.mfaEnabled || !user.mfaSecret) {
+      res.status(401).json({ error: 'Unable to verify multi-factor authentication.' });
+      return;
+    }
+    if (!verifyTotpCode(user.mfaSecret, String(code || ''))) {
+      recordLoginFailure(ip);
+      await repo.recordAuthAuditEvent({
+        userId: user.id,
+        actorEmail: user.email,
+        eventType: 'mfa_failed',
+        result: 'failure',
+        ipAddress: ip,
+      });
+      res.status(401).json({ error: 'Invalid verification code.' });
+      return;
+    }
+
+    loginFailureBuckets.delete(ip);
+    await repo.recordUserLogin(user.id);
+    await repo.recordAuthAuditEvent({
+      userId: user.id,
+      actorEmail: user.email,
+      eventType: 'login_mfa_succeeded',
+      result: 'success',
+      ipAddress: ip,
+    });
+
+    const session = await createSession(
+      {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        sessionVersion: user.sessionVersion ?? 1,
+      },
+      req
+    );
+    setSessionCookies(req, res, session);
+    res.json({
+      token: session.token,
+      csrfToken: session.csrfToken,
+      expiresInMs: ADMIN_TOKEN_TTL_MS,
+      expiresAt: session.expiresAt,
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        mfaEnabled: true,
+      },
+    });
+  });
+
+  app.post('/api/admin/login', async (req, res) => {
     const expected = process.env.ADMIN_PASSCODE?.trim();
     if (!expected) {
       res.status(503).json({
         error:
-          'Administrator authentication is not configured on this server. Set ADMIN_PASSCODE in server environment variables.',
+          'Administrator passcode authentication is not configured on this server. Sign in with your administrator email and password.',
       });
       return;
     }
 
     const ip = getClientIp(req);
+    const repo = getCaseRepository();
     if (checkLoginLockout(ip, res)) return;
 
     const { passcode } = req.body ?? {};
@@ -984,35 +1345,63 @@ export function createApiApp(): Express {
 
     if (!supplied || !timingSafeMatch(supplied, expected)) {
       recordLoginFailure(ip);
+      await repo.recordAuthAuditEvent({
+        userId: null,
+        actorEmail: 'executive-passcode',
+        eventType: 'passcode_login_failed',
+        result: 'failure',
+        ipAddress: ip,
+      });
       res.status(401).json({ error: 'Invalid executive passcode.' });
       return;
     }
 
     loginFailureBuckets.delete(ip);
-    const session = createSession({
-      id: null,
-      email: 'executive-admin',
-      name: 'Executive Admin',
-      role: 'admin',
+    const session = await createSession(
+      {
+        id: null,
+        email: 'executive-admin',
+        name: 'Executive Admin',
+        role: 'super_admin',
+        sessionVersion: 1,
+      },
+      req
+    );
+    await repo.recordAuthAuditEvent({
+      userId: null,
+      actorEmail: 'executive-admin',
+      eventType: 'passcode_login_succeeded',
+      result: 'success',
+      ipAddress: ip,
     });
     setSessionCookies(req, res, session);
     res.json({
       token: session.token,
       csrfToken: session.csrfToken,
       expiresInMs: ADMIN_TOKEN_TTL_MS,
+      expiresAt: session.expiresAt,
       user: {
         id: null,
         email: session.email,
         name: session.name,
         role: session.role,
+        mfaEnabled: false,
       },
     });
   });
 
-  const handleLogout = (req: AuthenticatedRequest, res: Response) => {
-    const { session } = extractSessionFromRequest(req);
-    if (session) {
-      activeSessions.delete(session.token);
+  const handleLogout = async (req: AuthenticatedRequest, res: Response) => {
+    const repo = getCaseRepository();
+    if (req.authSession) {
+      activeSessions.delete(req.authSession.token);
+      await repo.revokeSessionByTokenHash(req.authSession.tokenHash);
+      await repo.recordAuthAuditEvent({
+        userId: req.authSession.userId,
+        actorEmail: req.authSession.email,
+        eventType: 'logout',
+        result: 'success',
+        ipAddress: getClientIp(req),
+      });
     }
     clearSessionCookies(req, res);
     res.json({ ok: true });
@@ -1021,10 +1410,243 @@ export function createApiApp(): Express {
   app.post('/api/auth/logout', requireAuth, handleLogout);
 
   // -------------------------------------------------------------------------
-  // Case Management API (Authenticated Admin & Staff)
+  // Password Recovery & Invitation Acceptance (Public Rate-Limited Flows)
   // -------------------------------------------------------------------------
-  app.get('/api/admin/cases', requireAuth, async (req, res) => {
+  const recoveryLimiter = createRateLimiter('recovery', 5, 15 * 60 * 1000);
+  app.post('/api/auth/forgot-password', recoveryLimiter, async (req, res) => {
+    const rawEmail = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawEmail)) {
+      res.status(400).json({ error: 'Please enter a valid email address.' });
+      return;
+    }
+
+    const mailerConfig = getConsultationMailerConfig();
+    if (!mailerConfig) {
+      res.status(503).json({
+        error:
+          'Password recovery email delivery is not configured on this server. Contact a Super Administrator or configure Gmail delivery credentials.',
+      });
+      return;
+    }
+
     const repo = getCaseRepository();
+    const ip = getClientIp(req);
+    const user = await repo.getUserByEmail(rawEmail);
+
+    if (user && user.isActive) {
+      const rawToken = await repo.createPasswordRecoveryToken(user.id, RECOVERY_TOKEN_TTL_MS);
+      const baseAppUrl = resolvePublicAppBaseUrl(req, allowedOrigins);
+      const resetUrl = `${baseAppUrl}/admin/reset-password?token=${encodeURIComponent(rawToken)}`;
+      const sent = await sendTransactionalEmail({
+        to: user.email,
+        subject: 'Pio Languisan Admin Console — Password Recovery',
+        textBody: [
+          `Hello ${user.name},`,
+          '',
+          'A password recovery link was requested for your Pio Languisan Admin Console account.',
+          'Open the link below within 30 minutes to set a new password:',
+          resetUrl,
+          '',
+          'If you did not request this reset, you can safely ignore this message.',
+        ].join('\r\n'),
+      });
+      await repo.recordAuthAuditEvent({
+        userId: user.id,
+        actorEmail: user.email,
+        eventType: 'password_recovery_requested',
+        result: sent.delivered ? 'success' : 'failure',
+        ipAddress: ip,
+        metadata: { delivered: sent.delivered },
+      });
+    } else {
+      await repo.recordAuthAuditEvent({
+        userId: user?.id ?? null,
+        actorEmail: rawEmail,
+        eventType: 'password_recovery_requested',
+        result: 'failure',
+        ipAddress: ip,
+      });
+    }
+
+    res.json({
+      ok: true,
+      message:
+        'If an active administrator account matches that email, a password recovery link has been sent.',
+    });
+  });
+
+  app.post('/api/auth/reset-password', recoveryLimiter, async (req, res) => {
+    const token = typeof req.body?.token === 'string' ? req.body.token.trim() : '';
+    const newPassword = typeof req.body?.password === 'string' ? req.body.password : '';
+    if (!token) {
+      res.status(400).json({ error: 'A valid recovery token is required.' });
+      return;
+    }
+    const pwErr = validateStrongPassword(newPassword);
+    if (pwErr) {
+      res.status(400).json({ error: pwErr });
+      return;
+    }
+
+    const repo = getCaseRepository();
+    const ip = getClientIp(req);
+    const consumed = await repo.consumePasswordRecoveryToken(token, newPassword);
+    if (!consumed) {
+      await repo.recordAuthAuditEvent({
+        userId: null,
+        actorEmail: '',
+        eventType: 'password_reset_failed',
+        result: 'failure',
+        ipAddress: ip,
+      });
+      res.status(400).json({ error: 'This password recovery link is invalid or has expired.' });
+      return;
+    }
+
+    for (const [k, s] of activeSessions.entries()) {
+      if (s.userId === consumed.userId) activeSessions.delete(k);
+    }
+    await repo.recordAuthAuditEvent({
+      userId: consumed.userId,
+      actorEmail: consumed.email,
+      eventType: 'password_reset_completed',
+      result: 'success',
+      ipAddress: ip,
+    });
+    clearSessionCookies(req, res);
+    res.json({ ok: true, message: 'Your password has been updated. Please sign in.' });
+  });
+
+  app.post('/api/auth/accept-invite', recoveryLimiter, async (req, res) => {
+    const token = typeof req.body?.token === 'string' ? req.body.token.trim() : '';
+    const password = typeof req.body?.password === 'string' ? req.body.password : '';
+    if (!token) {
+      res.status(400).json({ error: 'A valid invitation token is required.' });
+      return;
+    }
+    const pwErr = validateStrongPassword(password);
+    if (pwErr) {
+      res.status(400).json({ error: pwErr });
+      return;
+    }
+
+    const repo = getCaseRepository();
+    const ip = getClientIp(req);
+    const created = await repo.acceptInvitation(token, password);
+    if (!created) {
+      res.status(400).json({ error: 'This invitation link is invalid, expired, or already used.' });
+      return;
+    }
+    await repo.recordAuthAuditEvent({
+      userId: created.id,
+      actorEmail: created.email,
+      eventType: 'invitation_accepted',
+      result: 'success',
+      ipAddress: ip,
+      metadata: { role: created.role },
+    });
+    res.status(201).json({ ok: true, user: created });
+  });
+
+  app.post('/api/auth/change-password', requireAuth, async (req: AuthenticatedRequest, res) => {
+    const session = req.authSession!;
+    if (!session.userId) {
+      res.status(400).json({ error: 'Passcode sessions do not support password updates.' });
+      return;
+    }
+    const currentPassword = typeof req.body?.currentPassword === 'string' ? req.body.currentPassword : '';
+    const newPassword = typeof req.body?.newPassword === 'string' ? req.body.newPassword : '';
+    if (!currentPassword) {
+      res.status(400).json({ error: 'Current password is required.' });
+      return;
+    }
+    const pwErr = validateStrongPassword(newPassword);
+    if (pwErr) {
+      res.status(400).json({ error: pwErr });
+      return;
+    }
+    const repo = getCaseRepository();
+    const user = await repo.getUserById(session.userId);
+    if (!user || !verifyPassword(currentPassword, user.passwordHash)) {
+      res.status(401).json({ error: 'Current password is incorrect.' });
+      return;
+    }
+    await repo.updateUserPassword(user.id, newPassword, session.id);
+    session.sessionVersion = (user.sessionVersion ?? 1) + 1;
+    for (const [k, s] of activeSessions.entries()) {
+      if (s.userId === user.id && s.id !== session.id) activeSessions.delete(k);
+    }
+    await repo.recordAuthAuditEvent({
+      userId: user.id,
+      actorEmail: user.email,
+      eventType: 'password_changed',
+      result: 'success',
+      ipAddress: getClientIp(req),
+    });
+    res.json({ ok: true, message: 'Password updated and other active sessions revoked.' });
+  });
+
+  app.post('/api/auth/mfa/setup', requireAuth, async (req: AuthenticatedRequest, res) => {
+    const session = req.authSession!;
+    if (!session.userId) {
+      res.status(400).json({ error: 'MFA setup requires a named user account.' });
+      return;
+    }
+    const secret = generateBase32Secret();
+    const issuer = encodeURIComponent('Pio Languisan Admin');
+    const account = encodeURIComponent(session.email);
+    const otpauthUrl = `otpauth://totp/${issuer}:${account}?secret=${secret}&issuer=${issuer}`;
+    res.json({ secret, otpauthUrl });
+  });
+
+  app.post('/api/auth/mfa/enable', requireAuth, async (req: AuthenticatedRequest, res) => {
+    const session = req.authSession!;
+    if (!session.userId) {
+      res.status(400).json({ error: 'MFA requires a named user account.' });
+      return;
+    }
+    const secret = typeof req.body?.secret === 'string' ? req.body.secret.trim() : '';
+    const code = typeof req.body?.code === 'string' ? req.body.code.trim() : '';
+    if (!secret || !verifyTotpCode(secret, code)) {
+      res.status(400).json({ error: 'Invalid authenticator verification code.' });
+      return;
+    }
+    const repo = getCaseRepository();
+    await repo.updateUserMfa(session.userId, { enabled: true, secret });
+    await repo.recordAuthAuditEvent({
+      userId: session.userId,
+      actorEmail: session.email,
+      eventType: 'mfa_enabled',
+      result: 'success',
+      ipAddress: getClientIp(req),
+    });
+    res.json({ ok: true });
+  });
+
+  app.post('/api/auth/mfa/disable', requireAuth, async (req: AuthenticatedRequest, res) => {
+    const session = req.authSession!;
+    if (!session.userId) {
+      res.status(400).json({ error: 'MFA requires a named user account.' });
+      return;
+    }
+    const repo = getCaseRepository();
+    await repo.updateUserMfa(session.userId, { enabled: false, secret: null });
+    await repo.recordAuthAuditEvent({
+      userId: session.userId,
+      actorEmail: session.email,
+      eventType: 'mfa_disabled',
+      result: 'success',
+      ipAddress: getClientIp(req),
+    });
+    res.json({ ok: true });
+  });
+
+  // -------------------------------------------------------------------------
+  // Case Management API (Authenticated Super Admin, Admin & Scoped Staff)
+  // -------------------------------------------------------------------------
+  app.get('/api/admin/cases', requireAuth, async (req: AuthenticatedRequest, res) => {
+    const repo = getCaseRepository();
+    const session = req.authSession!;
     const statusRaw = typeof req.query.status === 'string' ? req.query.status : 'All';
     const normalizedStatus =
       statusRaw === 'All' ? 'All' : normalizeStatusInput(statusRaw) || 'All';
@@ -1057,6 +1679,40 @@ export function createApiApp(): Express {
     };
 
     try {
+      if (session.role === 'staff') {
+        const all = await repo.getAllCases();
+        const permitted = all.filter(
+          (c) => c.assignedTo === null || c.assignedTo === session.userId
+        );
+        const search = (filters.search || '').trim().toLowerCase();
+        const filtered = permitted.filter((c) => {
+          if (filters.status && filters.status !== 'All' && c.status !== filters.status) return false;
+          if (filters.serviceDomain && filters.serviceDomain !== 'All' && c.serviceDomain !== filters.serviceDomain) return false;
+          if (filters.timeline && filters.timeline !== 'All' && c.timeline !== filters.timeline) return false;
+          if (search && ![c.caseNumber, c.id, c.name, c.email, c.company, c.message].join(' ').toLowerCase().includes(search)) return false;
+          return true;
+        });
+        const pageSize = Math.min(100, Math.max(1, filters.pageSize ?? 20));
+        const total = filtered.length;
+        const totalPages = Math.max(1, Math.ceil(total / pageSize));
+        const page = Math.min(totalPages, Math.max(1, filters.page ?? 1));
+        const offset = (page - 1) * pageSize;
+        res.json({
+          items: filtered.slice(offset, offset + pageSize),
+          total,
+          page,
+          pageSize,
+          totalPages,
+          statusCounts: {
+            All: permitted.length,
+            New: permitted.filter((c) => c.status === 'New').length,
+            Pending: permitted.filter((c) => c.status === 'Pending').length,
+            'Follow Up': permitted.filter((c) => c.status === 'Follow Up').length,
+            Completed: permitted.filter((c) => c.status === 'Completed').length,
+          },
+        });
+        return;
+      }
       const result = await repo.listCases(filters);
       res.json(result);
     } catch {
@@ -1064,12 +1720,21 @@ export function createApiApp(): Express {
     }
   });
 
-  app.get('/api/admin/cases/:id', requireAuth, async (req, res) => {
+  app.get('/api/admin/cases/:id', requireAuth, async (req: AuthenticatedRequest, res) => {
     const repo = getCaseRepository();
+    const session = req.authSession!;
     try {
       const detail = await repo.getCaseDetail(req.params.id);
       if (!detail) {
         res.status(404).json({ error: 'Case not found.' });
+        return;
+      }
+      if (
+        session.role === 'staff' &&
+        detail.caseRecord.assignedTo !== null &&
+        detail.caseRecord.assignedTo !== session.userId
+      ) {
+        res.status(403).json({ error: 'You do not have permission to view this assigned case.' });
         return;
       }
       res.json(detail);
@@ -1195,6 +1860,29 @@ export function createApiApp(): Express {
     }
 
     try {
+      const existingDetail = await repo.getCaseDetail(req.params.id);
+      if (!existingDetail) {
+        res.status(404).json({ error: 'Case not found.' });
+        return;
+      }
+      if (
+        req.authSession!.role === 'staff' &&
+        existingDetail.caseRecord.assignedTo !== null &&
+        existingDetail.caseRecord.assignedTo !== req.authSession!.userId
+      ) {
+        res.status(403).json({ error: 'You do not have permission to modify another team member’s assigned case.' });
+        return;
+      }
+      if (
+        req.authSession!.role === 'staff' &&
+        updates.assignedTo !== undefined &&
+        updates.assignedTo !== null &&
+        updates.assignedTo !== req.authSession!.userId
+      ) {
+        res.status(403).json({ error: 'Staff accounts may only claim unassigned cases or manage their own cases.' });
+        return;
+      }
+
       const updated = await repo.updateCase(
         req.params.id,
         updates,
@@ -1227,6 +1915,19 @@ export function createApiApp(): Express {
     }
     try {
       const repo = getCaseRepository();
+      const existingDetail = await repo.getCaseDetail(req.params.id);
+      if (!existingDetail) {
+        res.status(404).json({ error: 'Case not found.' });
+        return;
+      }
+      if (
+        req.authSession!.role === 'staff' &&
+        existingDetail.caseRecord.assignedTo !== null &&
+        existingDetail.caseRecord.assignedTo !== req.authSession!.userId
+      ) {
+        res.status(403).json({ error: 'You do not have permission to add notes to this assigned case.' });
+        return;
+      }
       const note = await repo.addCaseNote(req.params.id, content, sessionToActor(req.authSession!));
       if (!note) {
         res.status(404).json({ error: 'Case not found.' });
@@ -1239,9 +1940,9 @@ export function createApiApp(): Express {
   });
 
   // -------------------------------------------------------------------------
-  // Analytics & Reports
+  // Analytics & Reports (Super Admin & Admin)
   // -------------------------------------------------------------------------
-  app.get('/api/admin/analytics', requireAuth, async (req, res) => {
+  app.get('/api/admin/analytics', requireAuth, requireAdminRole, async (req, res) => {
     const repo = getCaseRepository();
     const fromIso = typeof req.query.from === 'string' ? req.query.from : undefined;
     const toIso = typeof req.query.to === 'string' ? req.query.to : undefined;
@@ -1336,7 +2037,7 @@ export function createApiApp(): Express {
     res.json({ ok: true });
   });
 
-  app.get('/api/admin/activity', requireAuth, async (req, res) => {
+  app.get('/api/admin/activity', requireAuth, requireAdminRole, async (req, res) => {
     const repo = getCaseRepository();
     const limit = Number(req.query.limit) || 100;
     try {
@@ -1347,10 +2048,21 @@ export function createApiApp(): Express {
     }
   });
 
+  app.get('/api/admin/audit-events', requireAuth, requireSuperAdminRole, async (req, res) => {
+    const repo = getCaseRepository();
+    const limit = Number(req.query.limit) || 100;
+    try {
+      const events = await repo.listAuthAuditEvents(limit);
+      res.json({ events });
+    } catch {
+      res.status(503).json({ error: 'Unable to load authentication audit events.' });
+    }
+  });
+
   // -------------------------------------------------------------------------
-  // Team & Access Management (RBAC: Admin Only for Mutations)
+  // Team, Invitations, Sessions & Access Management (Super Admin for Admin Settings)
   // -------------------------------------------------------------------------
-  app.get('/api/admin/users', requireAuth, async (_req, res) => {
+  app.get('/api/admin/users', requireAuth, requireAdminRole, async (_req, res) => {
     const repo = getCaseRepository();
     try {
       const users = await repo.listUsers();
@@ -1360,11 +2072,10 @@ export function createApiApp(): Express {
     }
   });
 
-  app.post('/api/admin/users', requireAuth, requireAdminRole, async (req: AuthenticatedRequest, res) => {
+  app.post('/api/admin/users', requireAuth, requireSuperAdminRole, async (req: AuthenticatedRequest, res) => {
     const { email, name, role, password } = req.body ?? {};
     const cleanEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
     const cleanName = typeof name === 'string' ? name.trim() : '';
-    const cleanRole: AdminRole = role === 'admin' ? 'admin' : role === 'staff' ? 'staff' : 'staff';
     const cleanPassword = typeof password === 'string' ? password : '';
 
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
@@ -1375,12 +2086,13 @@ export function createApiApp(): Express {
       res.status(400).json({ error: 'User name must be between 2 and 80 characters.' });
       return;
     }
-    if (role !== 'admin' && role !== 'staff') {
-      res.status(400).json({ error: 'Role must be admin or staff.' });
+    if (role !== 'super_admin' && role !== 'admin' && role !== 'staff') {
+      res.status(400).json({ error: 'Role must be super_admin, admin, or staff.' });
       return;
     }
-    if (cleanPassword.length < 10) {
-      res.status(400).json({ error: 'Password must be at least 10 characters.' });
+    const pwErr = validateStrongPassword(cleanPassword);
+    if (pwErr) {
+      res.status(400).json({ error: pwErr });
       return;
     }
 
@@ -1389,12 +2101,20 @@ export function createApiApp(): Express {
       const created = await repo.createUser({
         email: cleanEmail,
         name: cleanName,
-        role: cleanRole,
+        role,
         password: cleanPassword,
       });
       await repo.recordGlobalActivity(sessionToActor(req.authSession!), 'user_created', {
         email: created.email,
         role: created.role,
+      });
+      await repo.recordAuthAuditEvent({
+        userId: req.authSession!.userId,
+        actorEmail: req.authSession!.email,
+        eventType: 'user_created',
+        result: 'success',
+        ipAddress: getClientIp(req),
+        metadata: { targetEmail: created.email, role: created.role },
       });
       res.status(201).json({ user: created });
     } catch {
@@ -1402,12 +2122,12 @@ export function createApiApp(): Express {
     }
   });
 
-  app.patch('/api/admin/users/:id', requireAuth, requireAdminRole, async (req: AuthenticatedRequest, res) => {
+  app.patch('/api/admin/users/:id', requireAuth, requireSuperAdminRole, async (req: AuthenticatedRequest, res) => {
     const { role, isActive, name } = req.body ?? {};
     const changes: { role?: AdminRole; isActive?: boolean; name?: string } = {};
     if (role !== undefined) {
-      if (role !== 'admin' && role !== 'staff') {
-        res.status(400).json({ error: 'Role must be admin or staff.' });
+      if (role !== 'super_admin' && role !== 'admin' && role !== 'staff') {
+        res.status(400).json({ error: 'Role must be super_admin, admin, or staff.' });
         return;
       }
       changes.role = role;
@@ -1433,40 +2153,170 @@ export function createApiApp(): Express {
       res.status(404).json({ error: 'User not found.' });
       return;
     }
+    if (updated.isActive === false) {
+      for (const [k, s] of activeSessions.entries()) {
+        if (s.userId === updated.id) activeSessions.delete(k);
+      }
+    }
     await repo.recordGlobalActivity(sessionToActor(req.authSession!), 'user_updated', {
       targetUserId: updated.id,
       role: updated.role,
       isActive: updated.isActive,
     });
+    await repo.recordAuthAuditEvent({
+      userId: req.authSession!.userId,
+      actorEmail: req.authSession!.email,
+      eventType: 'user_updated',
+      result: 'success',
+      ipAddress: getClientIp(req),
+      metadata: { targetUserId: updated.id, role: updated.role, isActive: updated.isActive },
+    });
     res.json({ user: updated });
   });
 
+  app.get('/api/admin/invitations', requireAuth, requireSuperAdminRole, async (_req, res) => {
+    const repo = getCaseRepository();
+    const invitations = await repo.listInvitations();
+    res.json({ invitations });
+  });
+
+  app.post('/api/admin/invitations', requireAuth, requireSuperAdminRole, async (req: AuthenticatedRequest, res) => {
+    const { email, name, role } = req.body ?? {};
+    const cleanEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
+    const cleanName = typeof name === 'string' ? name.trim() : '';
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      res.status(400).json({ error: 'Valid invitee email is required.' });
+      return;
+    }
+    if (cleanName.length < 2 || cleanName.length > 80) {
+      res.status(400).json({ error: 'Invitee name must be between 2 and 80 characters.' });
+      return;
+    }
+    if (role !== 'super_admin' && role !== 'admin' && role !== 'staff') {
+      res.status(400).json({ error: 'Role must be super_admin, admin, or staff.' });
+      return;
+    }
+
+    const repo = getCaseRepository();
+    const existing = await repo.getUserByEmail(cleanEmail);
+    if (existing) {
+      res.status(409).json({ error: 'An account with this email already exists.' });
+      return;
+    }
+
+    const { invitation, rawToken } = await repo.createInvitation({
+      email: cleanEmail,
+      name: cleanName,
+      role,
+      invitedBy: req.authSession!.userId,
+      ttlMs: INVITATION_TOKEN_TTL_MS,
+    });
+    const baseAppUrl = resolvePublicAppBaseUrl(req, allowedOrigins);
+    const inviteUrl = `${baseAppUrl}/admin/accept-invite?token=${encodeURIComponent(rawToken)}`;
+
+    let emailed = false;
+    if (getConsultationMailerConfig()) {
+      const result = await sendTransactionalEmail({
+        to: cleanEmail,
+        subject: 'Pio Languisan Admin Console — Team Invitation',
+        textBody: [
+          `Hello ${cleanName},`,
+          '',
+          `You have been invited to join the Pio Languisan Admin Console as ${role}.`,
+          'Accept your invitation and set your password using the link below (valid for 72 hours):',
+          inviteUrl,
+        ].join('\r\n'),
+      });
+      emailed = result.delivered;
+    }
+
+    await repo.recordAuthAuditEvent({
+      userId: req.authSession!.userId,
+      actorEmail: req.authSession!.email,
+      eventType: 'invitation_created',
+      result: 'success',
+      ipAddress: getClientIp(req),
+      metadata: { targetEmail: cleanEmail, role, emailed },
+    });
+
+    res.status(201).json({
+      invitation,
+      emailed,
+      ...(emailed ? {} : { manualInviteUrl: inviteUrl }),
+    });
+  });
+
+  app.get('/api/admin/sessions', requireAuth, async (req: AuthenticatedRequest, res) => {
+    const repo = getCaseRepository();
+    const s = req.authSession!;
+    const sessions = isSuperAdmin(s.role)
+      ? await repo.listSessions()
+      : s.userId
+        ? await repo.listSessions(s.userId)
+        : [];
+    res.json({
+      sessions: sessions.map((item) => ({
+        ...item,
+        isCurrent: item.id === s.id,
+      })),
+    });
+  });
+
+  app.post('/api/admin/sessions/:id/revoke', requireAuth, async (req: AuthenticatedRequest, res) => {
+    const repo = getCaseRepository();
+    const s = req.authSession!;
+    const targetUserScope = isSuperAdmin(s.role) ? undefined : s.userId ?? '__none__';
+    const revoked = await repo.revokeSessionById(req.params.id, targetUserScope);
+    if (!revoked) {
+      res.status(404).json({ error: 'Active session not found.' });
+      return;
+    }
+    for (const [k, active] of activeSessions.entries()) {
+      if (active.id === req.params.id) activeSessions.delete(k);
+    }
+    await repo.recordAuthAuditEvent({
+      userId: s.userId,
+      actorEmail: s.email,
+      eventType: 'session_revoked',
+      result: 'success',
+      ipAddress: getClientIp(req),
+      metadata: { revokedSessionId: req.params.id },
+    });
+    res.json({ ok: true });
+  });
+
   // -------------------------------------------------------------------------
-  // Legacy Dashboard & Portfolio / Brand Endpoints (Preserved + RBAC hardened)
+  // Dashboard Overview & Portfolio / Brand Endpoints (RBAC Enforced)
   // -------------------------------------------------------------------------
   app.get('/api/admin/dashboard', requireAuth, async (req: AuthenticatedRequest, res) => {
     try {
       const repo = getCaseRepository();
-      const [cases, content, notifications, users] = await Promise.all([
-        repo.getAllCases(),
+      const s = req.authSession!;
+      const allCases = await repo.getAllCases();
+      const visibleCases =
+        s.role === 'staff'
+          ? allCases.filter((c) => c.assignedTo === null || c.assignedTo === s.userId)
+          : allCases;
+
+      const [content, notifications, users] = await Promise.all([
         repo.getSiteContent(),
-        repo.listNotifications(req.authSession!.userId),
-        repo.listUsers(),
+        repo.listNotifications(s.userId),
+        isAdminOrSuper(s.role) ? repo.listUsers() : Promise.resolve([]),
       ]);
-      const analytics = computeDashboardAnalytics(cases);
+      const analytics = computeDashboardAnalytics(visibleCases);
       res.json({
-        inquiries: cases,
-        cases,
+        inquiries: visibleCases,
+        cases: visibleCases,
         projects: content.projects,
         brand: content.brand,
         analytics,
         users,
         unreadNotifications: notifications.filter((n) => !n.readAt).length,
         currentUser: {
-          id: req.authSession!.userId,
-          email: req.authSession!.email,
-          name: req.authSession!.name,
-          role: req.authSession!.role,
+          id: s.userId,
+          email: s.email,
+          name: s.name,
+          role: s.role,
         },
       });
     } catch {
@@ -1474,7 +2324,7 @@ export function createApiApp(): Express {
     }
   });
 
-  app.post('/api/admin/projects', requireAuth, requireAdminRole, async (req: AuthenticatedRequest, res) => {
+  app.post('/api/admin/projects', requireAuth, requireSuperAdminRole, async (req: AuthenticatedRequest, res) => {
     const { title, domain, tier, timeframe, metricValue, metricLabel, summary, architecture } =
       req.body ?? {};
     const trimmedTitle = typeof title === 'string' ? title.trim() : '';
@@ -1522,7 +2372,7 @@ export function createApiApp(): Express {
     res.status(201).json({ project: newProject, projects: nextProjects });
   });
 
-  app.delete('/api/admin/projects/:id', requireAuth, requireAdminRole, async (req: AuthenticatedRequest, res) => {
+  app.delete('/api/admin/projects/:id', requireAuth, requireSuperAdminRole, async (req: AuthenticatedRequest, res) => {
     const repo = getCaseRepository();
     const content = await repo.getSiteContent();
     const next = content.projects.filter((p) => p.id !== req.params.id);
@@ -1537,7 +2387,7 @@ export function createApiApp(): Express {
     res.json({ projects: next });
   });
 
-  app.post('/api/admin/brand', requireAuth, requireAdminRole, async (req: AuthenticatedRequest, res) => {
+  app.post('/api/admin/brand', requireAuth, requireSuperAdminRole, async (req: AuthenticatedRequest, res) => {
     const { customLogoDataUrl, motionEnabled, motionSensitivity } = req.body ?? {};
     if (customLogoDataUrl !== undefined) {
       const check = validateRasterDataUrl(customLogoDataUrl);

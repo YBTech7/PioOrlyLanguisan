@@ -1,14 +1,34 @@
 import React, { useState } from 'react';
-import { Bell, CheckCheck, Plus, Trash2, Upload } from 'lucide-react';
+import {
+  Bell,
+  CheckCheck,
+  KeyRound,
+  Monitor,
+  Plus,
+  ShieldAlert,
+  ShieldCheck,
+  Trash2,
+  Upload,
+  UserPlus,
+} from 'lucide-react';
 import type {
+  AdminInvitation,
   AdminNotification,
   AdminRole,
+  AdminSessionInfo,
   AdminUser,
+  AuthAuditEvent,
   BrandSettings,
   CaseActivityEntry,
   ProjectCase,
 } from '../../types';
 import { formatDateTime } from './AdminShared';
+
+export function formatRoleLabel(role: AdminRole): string {
+  if (role === 'super_admin') return 'Super Admin';
+  if (role === 'admin') return 'Admin';
+  return 'Staff';
+}
 
 export const AdminNotificationsView: React.FC<{
   notifications: AdminNotification[];
@@ -87,8 +107,10 @@ export const AdminNotificationsView: React.FC<{
 
 export const AdminActivityView: React.FC<{
   activity: CaseActivityEntry[];
+  auditEvents?: AuthAuditEvent[];
+  userRole: AdminRole;
   onOpenCase: (caseId: string) => void;
-}> = ({ activity, onOpenCase }) => {
+}> = ({ activity, auditEvents = [], userRole, onOpenCase }) => {
   const [query, setQuery] = useState('');
   const filtered = activity.filter((item) => {
     if (!query.trim()) return true;
@@ -101,61 +123,114 @@ export const AdminActivityView: React.FC<{
   });
 
   return (
-    <div className="rounded-xl border border-[#D1A953]/20 bg-[#0C2935] p-5 sm:p-6 space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#D1A953]/15 pb-3">
-        <div>
-          <h3 className="font-editorial text-lg font-semibold text-[#F5F2EB]">
-            Immutable Activity Audit Log
-          </h3>
-          <p className="text-xs text-[#C2D0D6]">
-            Chronological trail of case submissions, status transitions, notes, exports, and team
-            changes
-          </p>
+    <div className="space-y-6">
+      <div className="rounded-xl border border-[#D1A953]/20 bg-[#0C2935] p-5 sm:p-6 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#D1A953]/15 pb-3">
+          <div>
+            <h3 className="font-editorial text-lg font-semibold text-[#F5F2EB]">
+              Immutable Case &amp; Operations Activity Log
+            </h3>
+            <p className="text-xs text-[#C2D0D6]">
+              Chronological trail of case submissions, status transitions, notes, exports, and team
+              updates
+            </p>
+          </div>
+          <input
+            type="search"
+            aria-label="Filter activity log"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Filter by action, actor, or CASE ID..."
+            className="min-h-[38px] w-full sm:w-64 rounded-lg border border-[#D1A953]/25 bg-[#061823] px-3 py-1.5 text-xs text-[#F5F2EB]"
+          />
         </div>
-        <input
-          type="search"
-          aria-label="Filter activity log"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Filter by action, actor, or CASE ID..."
-          className="min-h-[38px] w-full sm:w-64 rounded-lg border border-[#D1A953]/25 bg-[#061823] px-3 py-1.5 text-xs text-[#F5F2EB]"
-        />
+
+        {filtered.length === 0 ? (
+          <p className="py-8 text-center text-sm text-[#C2D0D6]">No activity entries found.</p>
+        ) : (
+          <div className="divide-y divide-[#D1A953]/12">
+            {filtered.map((item) => (
+              <div
+                key={item.id}
+                className="flex flex-wrap items-center justify-between gap-3 py-3 text-xs"
+              >
+                <div className="space-y-0.5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-mono font-semibold text-[#DFC585]">{item.action}</span>
+                    {item.caseNumber && item.caseId && (
+                      <button
+                        type="button"
+                        onClick={() => onOpenCase(item.caseId!)}
+                        className="font-mono text-[#F5F2EB] underline decoration-[#D1A953]/50 underline-offset-2 hover:text-[#DFC585]"
+                      >
+                        {item.caseNumber}
+                      </button>
+                    )}
+                    <span className="text-[#C2D0D6]">by {item.actorEmail}</span>
+                  </div>
+                  {Object.keys(item.metadata || {}).length > 0 && (
+                    <p className="font-mono text-[11px] text-[#C2D0D6]/85 break-all">
+                      {JSON.stringify(item.metadata)}
+                    </p>
+                  )}
+                </div>
+                <span className="font-mono tabular-nums text-[11px] text-[#C2D0D6]">
+                  {formatDateTime(item.createdAt)}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
-      {filtered.length === 0 ? (
-        <p className="py-8 text-center text-sm text-[#C2D0D6]">No activity entries found.</p>
-      ) : (
-        <div className="divide-y divide-[#D1A953]/12">
-          {filtered.map((item) => (
-            <div
-              key={item.id}
-              className="flex flex-wrap items-center justify-between gap-3 py-3 text-xs"
-            >
-              <div className="space-y-0.5">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-mono font-semibold text-[#DFC585]">{item.action}</span>
-                  {item.caseNumber && item.caseId && (
-                    <button
-                      type="button"
-                      onClick={() => onOpenCase(item.caseId!)}
-                      className="font-mono text-[#F5F2EB] underline decoration-[#D1A953]/50 underline-offset-2 hover:text-[#DFC585]"
-                    >
-                      {item.caseNumber}
-                    </button>
-                  )}
-                  <span className="text-[#C2D0D6]">by {item.actorEmail}</span>
+      {userRole === 'super_admin' && (
+        <div className="rounded-xl border border-[#D1A953]/20 bg-[#0C2935] p-5 sm:p-6 space-y-4">
+          <div className="border-b border-[#D1A953]/15 pb-3">
+            <h3 className="font-editorial text-lg font-semibold text-[#F5F2EB]">
+              Authentication Security Events
+            </h3>
+            <p className="text-xs text-[#C2D0D6]">
+              Sign-in attempts, MFA challenges, password recoveries, invitation acceptances, and
+              session revocations (Super Admin only)
+            </p>
+          </div>
+          {auditEvents.length === 0 ? (
+            <p className="py-6 text-center text-xs text-[#C2D0D6]">
+              No authentication security events recorded yet.
+            </p>
+          ) : (
+            <div className="divide-y divide-[#D1A953]/12">
+              {auditEvents.map((ev) => (
+                <div
+                  key={ev.id}
+                  className="flex flex-wrap items-center justify-between gap-3 py-2.5 text-xs"
+                >
+                  <div className="space-y-0.5">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-mono font-semibold text-[#DFC585]">{ev.eventType}</span>
+                      <span
+                        className={`font-mono text-[11px] ${
+                          ev.result === 'success' ? 'text-emerald-300' : 'text-amber-300'
+                        }`}
+                      >
+                        [{ev.result}]
+                      </span>
+                      <span className="text-[#C2D0D6]">{ev.actorEmail || 'anonymous'}</span>
+                    </div>
+                    <p className="font-mono text-[11px] text-[#C2D0D6]/75">
+                      IP: {ev.ipAddress || 'unknown'}
+                      {Object.keys(ev.metadata || {}).length > 0
+                        ? ` · ${JSON.stringify(ev.metadata)}`
+                        : ''}
+                    </p>
+                  </div>
+                  <span className="font-mono tabular-nums text-[11px] text-[#C2D0D6]">
+                    {formatDateTime(ev.createdAt)}
+                  </span>
                 </div>
-                {Object.keys(item.metadata || {}).length > 0 && (
-                  <p className="font-mono text-[11px] text-[#C2D0D6]/85">
-                    {JSON.stringify(item.metadata)}
-                  </p>
-                )}
-              </div>
-              <span className="font-mono tabular-nums text-[11px] text-[#C2D0D6]">
-                {formatDateTime(item.createdAt)}
-              </span>
+              ))}
             </div>
-          ))}
+          )}
         </div>
       )}
     </div>
@@ -163,19 +238,33 @@ export const AdminActivityView: React.FC<{
 };
 
 export const AdminSettingsView: React.FC<{
+  currentUserId: string | null;
   userRole: AdminRole;
+  mfaEnabled: boolean;
   users: AdminUser[];
+  invitations: AdminInvitation[];
+  sessions: AdminSessionInfo[];
   projects: ProjectCase[];
   brand: BrandSettings;
   storageMode: string;
   mailerConfigured: boolean;
+  onChangePassword: (currentPassword: string, newPassword: string) => Promise<void>;
+  onSetupMfa: () => Promise<{ secret: string; otpauthUrl: string } | null>;
+  onEnableMfa: (secret: string, code: string) => Promise<void>;
+  onDisableMfa: () => Promise<void>;
   onCreateUser: (payload: {
     email: string;
     name: string;
     role: AdminRole;
     password: string;
   }) => Promise<void>;
-  onToggleUserActive: (userId: string, isActive: boolean) => Promise<void>;
+  onUpdateUser: (userId: string, changes: { role?: AdminRole; isActive?: boolean }) => Promise<void>;
+  onCreateInvitation: (payload: {
+    email: string;
+    name: string;
+    role: AdminRole;
+  }) => Promise<{ emailed: boolean; manualInviteUrl?: string } | null>;
+  onRevokeSession: (sessionId: string) => Promise<void>;
   onAddProject: (payload: {
     title: string;
     domain: string;
@@ -188,23 +277,45 @@ export const AdminSettingsView: React.FC<{
   onUploadLogo: (file: File | undefined) => void;
   onResetLogo: () => Promise<void>;
 }> = ({
+  currentUserId,
   userRole,
+  mfaEnabled,
   users,
+  invitations,
+  sessions,
   projects,
   brand,
   storageMode,
   mailerConfigured,
+  onChangePassword,
+  onSetupMfa,
+  onEnableMfa,
+  onDisableMfa,
   onCreateUser,
-  onToggleUserActive,
+  onUpdateUser,
+  onCreateInvitation,
+  onRevokeSession,
   onAddProject,
   onDeleteProject,
   onUploadLogo,
   onResetLogo,
 }) => {
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+
+  const [mfaSetupSecret, setMfaSetupSecret] = useState<string | null>(null);
+  const [mfaSetupUri, setMfaSetupUri] = useState<string | null>(null);
+  const [mfaVerifyCode, setMfaVerifyCode] = useState('');
+
   const [userEmail, setUserEmail] = useState('');
   const [userName, setUserName] = useState('');
   const [userRoleInput, setUserRoleInput] = useState<AdminRole>('staff');
   const [userPassword, setUserPassword] = useState('');
+
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [inviteName, setInviteName] = useState('');
+  const [inviteRole, setInviteRole] = useState<AdminRole>('staff');
+  const [generatedInviteUrl, setGeneratedInviteUrl] = useState<string | null>(null);
 
   const [newTitle, setNewTitle] = useState('');
   const [newDomain, setNewDomain] = useState('Data Analytics');
@@ -213,11 +324,37 @@ export const AdminSettingsView: React.FC<{
   const [newMetricLabel, setNewMetricLabel] = useState('Operational throughput improvement');
   const [newSummary, setNewSummary] = useState('');
 
-  const isAdmin = userRole === 'admin';
+  const isSuperAdmin = userRole === 'super_admin';
+  const isAdminOrSuper = userRole === 'super_admin' || userRole === 'admin';
+
+  const handlePasswordSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await onChangePassword(currentPassword, newPassword);
+    setCurrentPassword('');
+    setNewPassword('');
+  };
+
+  const handleStartMfa = async () => {
+    const setup = await onSetupMfa();
+    if (setup) {
+      setMfaSetupSecret(setup.secret);
+      setMfaSetupUri(setup.otpauthUrl);
+      setMfaVerifyCode('');
+    }
+  };
+
+  const handleConfirmMfa = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!mfaSetupSecret) return;
+    await onEnableMfa(mfaSetupSecret, mfaVerifyCode.trim());
+    setMfaSetupSecret(null);
+    setMfaSetupUri(null);
+    setMfaVerifyCode('');
+  };
 
   const handleUserSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!isAdmin) return;
+    if (!isSuperAdmin) return;
     await onCreateUser({
       email: userEmail.trim(),
       name: userName.trim(),
@@ -229,9 +366,24 @@ export const AdminSettingsView: React.FC<{
     setUserPassword('');
   };
 
+  const handleInviteSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!isSuperAdmin) return;
+    const res = await onCreateInvitation({
+      email: inviteEmail.trim(),
+      name: inviteName.trim(),
+      role: inviteRole,
+    });
+    if (res) {
+      setInviteEmail('');
+      setInviteName('');
+      setGeneratedInviteUrl(res.manualInviteUrl || null);
+    }
+  };
+
   const handleProjectSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!isAdmin || !newTitle.trim() || !newSummary.trim()) return;
+    if (!isSuperAdmin || !newTitle.trim() || !newSummary.trim()) return;
     await onAddProject({
       title: newTitle.trim(),
       domain: newDomain,
@@ -253,117 +405,420 @@ export const AdminSettingsView: React.FC<{
         </h3>
         <dl className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 text-xs">
           <div>
-            <dt className="text-[#DFC585]">Case Persistence Engine</dt>
+            <dt className="text-[#DFC585]">Case &amp; Auth Persistence Engine</dt>
             <dd className="mt-1 font-mono text-[#F5F2EB]">
-              {storageMode === 'postgres' ? 'PostgreSQL Relational Database' : 'Transactional File/Memory Store'}
+              {storageMode === 'postgres'
+                ? 'PostgreSQL Relational Database'
+                : 'Transactional File/Memory Store'}
             </dd>
           </div>
           <div>
-            <dt className="text-[#DFC585]">External Gmail Notification Mailer</dt>
+            <dt className="text-[#DFC585]">External Gmail Mailer (Cases &amp; Recovery)</dt>
             <dd className="mt-1 font-mono text-[#F5F2EB]">
               {mailerConfigured
-                ? 'Configured (Retryable Background Outbox Active)'
-                : 'Optional / Not Configured (In-App Notifications Active)'}
+                ? 'Configured (Active for Case Alerts & Recovery Links)'
+                : 'Not Configured (In-App Notifications Active)'}
             </dd>
           </div>
         </dl>
       </div>
 
-      {/* Team Access Control (RBAC) */}
-      <div className="rounded-xl border border-[#D1A953]/20 bg-[#0C2935] p-5 sm:p-6 space-y-5">
+      {/* Account Password & Multi-Factor Authentication */}
+      {currentUserId && (
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+          <form
+            onSubmit={handlePasswordSubmit}
+            className="rounded-xl border border-[#D1A953]/20 bg-[#0C2935] p-5 sm:p-6 space-y-4"
+          >
+            <div className="border-b border-[#D1A953]/15 pb-3">
+              <h3 className="font-editorial text-lg font-semibold text-[#F5F2EB]">
+                Change Account Password
+              </h3>
+              <p className="text-xs text-[#C2D0D6]">
+                Requires 12+ characters with uppercase, lowercase, and a digit or symbol.
+              </p>
+            </div>
+            <div>
+              <label htmlFor="sec-cur-pw" className="block text-xs font-medium text-[#DFC585]">
+                Current Password
+              </label>
+              <input
+                id="sec-cur-pw"
+                type="password"
+                value={currentPassword}
+                onChange={(e) => setCurrentPassword(e.target.value)}
+                required
+                className="mt-1.5 min-h-[40px] w-full rounded-lg border border-[#D1A953]/25 bg-[#061823] px-3 py-1.5 text-xs text-[#F5F2EB]"
+              />
+            </div>
+            <div>
+              <label htmlFor="sec-new-pw" className="block text-xs font-medium text-[#DFC585]">
+                New Strong Password
+              </label>
+              <input
+                id="sec-new-pw"
+                type="password"
+                minLength={12}
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                required
+                className="mt-1.5 min-h-[40px] w-full rounded-lg border border-[#D1A953]/25 bg-[#061823] px-3 py-1.5 text-xs text-[#F5F2EB]"
+              />
+            </div>
+            <button
+              type="submit"
+              className="inline-flex min-h-[40px] items-center gap-1.5 rounded-lg bg-[#D1A953] px-4 py-2 text-xs font-semibold text-[#061823] hover:bg-[#DFC585]"
+            >
+              <KeyRound className="h-3.5 w-3.5" aria-hidden="true" />
+              <span>Update Password</span>
+            </button>
+          </form>
+
+          <div className="rounded-xl border border-[#D1A953]/20 bg-[#0C2935] p-5 sm:p-6 space-y-4">
+            <div className="border-b border-[#D1A953]/15 pb-3">
+              <h3 className="font-editorial text-lg font-semibold text-[#F5F2EB]">
+                Authenticator MFA (TOTP)
+              </h3>
+              <p className="text-xs text-[#C2D0D6]">
+                Protect your administrator session with 6-digit authenticator verification codes.
+              </p>
+            </div>
+
+            {mfaEnabled ? (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 text-xs text-emerald-300">
+                  <ShieldCheck className="h-4 w-4" aria-hidden="true" />
+                  <span>Multi-factor authentication is currently active on your account.</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={onDisableMfa}
+                  className="min-h-[40px] rounded-lg border border-[#D1A953]/30 bg-[#061823] px-4 py-2 text-xs font-medium text-[#F5F2EB] hover:border-amber-400/50 hover:text-amber-200"
+                >
+                  Disable MFA
+                </button>
+              </div>
+            ) : mfaSetupSecret ? (
+              <form onSubmit={handleConfirmMfa} className="space-y-3">
+                <div className="rounded-lg border border-[#D1A953]/25 bg-[#061823] p-3 text-xs space-y-1.5">
+                  <p className="text-[#DFC585] font-medium">
+                    Add this secret key to your authenticator app:
+                  </p>
+                  <p className="font-mono text-[#F5F2EB] select-all break-all">{mfaSetupSecret}</p>
+                  {mfaSetupUri && (
+                    <p className="font-mono text-[11px] text-[#C2D0D6] break-all">
+                      URI: {mfaSetupUri}
+                    </p>
+                  )}
+                </div>
+                <div>
+                  <label htmlFor="mfa-verify-code" className="block text-xs text-[#DFC585]">
+                    Enter 6-Digit Code to Confirm
+                  </label>
+                  <input
+                    id="mfa-verify-code"
+                    type="text"
+                    inputMode="numeric"
+                    value={mfaVerifyCode}
+                    onChange={(e) => setMfaVerifyCode(e.target.value)}
+                    placeholder="000000"
+                    required
+                    className="mt-1.5 min-h-[40px] w-full rounded-lg border border-[#D1A953]/25 bg-[#061823] px-3 py-1.5 font-mono text-sm text-[#F5F2EB]"
+                  />
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="submit"
+                    className="min-h-[38px] rounded-lg bg-[#D1A953] px-4 py-1.5 text-xs font-semibold text-[#061823]"
+                  >
+                    Verify &amp; Enable MFA
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMfaSetupSecret(null);
+                      setMfaSetupUri(null);
+                    }}
+                    className="min-h-[38px] rounded-lg border border-[#D1A953]/25 px-3 py-1.5 text-xs text-[#C2D0D6]"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 text-xs text-[#C2D0D6]">
+                  <ShieldAlert className="h-4 w-4 text-[#D1A953]" aria-hidden="true" />
+                  <span>MFA is currently not enabled on your account.</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleStartMfa}
+                  className="inline-flex min-h-[40px] items-center gap-1.5 rounded-lg border border-[#D1A953]/35 bg-[#061823] px-4 py-2 text-xs font-medium text-[#DFC585] hover:bg-[#123846]"
+                >
+                  <ShieldCheck className="h-3.5 w-3.5" aria-hidden="true" />
+                  <span>Configure Authenticator MFA</span>
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Active Sessions */}
+      <div className="rounded-xl border border-[#D1A953]/20 bg-[#0C2935] p-5 sm:p-6 space-y-4">
         <div className="border-b border-[#D1A953]/15 pb-3">
           <h3 className="font-editorial text-lg font-semibold text-[#F5F2EB]">
-            Team Accounts &amp; Role-Based Access
+            Active Console Sessions ({sessions.filter((s) => !s.revokedAt).length})
           </h3>
           <p className="text-xs text-[#C2D0D6]">
-            Administrators manage team accounts, CSV exports, and portfolio settings; Staff manage
-            case triage, statuses, and internal notes.
+            {isSuperAdmin
+              ? 'View and revoke active administrator and staff login sessions across the platform.'
+              : 'Monitor and revoke your own active login sessions.'}
           </p>
         </div>
 
-        {isAdmin ? (
-          <form onSubmit={handleUserSubmit} className="grid grid-cols-1 gap-3 sm:grid-cols-4">
-            <input
-              type="text"
-              value={userName}
-              onChange={(e) => setUserName(e.target.value)}
-              placeholder="Full name"
-              required
-              className="min-h-[40px] rounded-lg border border-[#D1A953]/25 bg-[#061823] px-3 py-1.5 text-xs text-[#F5F2EB]"
-            />
-            <input
-              type="email"
-              value={userEmail}
-              onChange={(e) => setUserEmail(e.target.value)}
-              placeholder="Work email"
-              required
-              className="min-h-[40px] rounded-lg border border-[#D1A953]/25 bg-[#061823] px-3 py-1.5 text-xs text-[#F5F2EB]"
-            />
-            <select
-              aria-label="New user role"
-              value={userRoleInput}
-              onChange={(e) => setUserRoleInput(e.target.value as AdminRole)}
-              className="min-h-[40px] rounded-lg border border-[#D1A953]/25 bg-[#061823] px-3 py-1.5 text-xs text-[#F5F2EB]"
-            >
-              <option value="staff">Staff</option>
-              <option value="admin">Admin</option>
-            </select>
-            <input
-              type="password"
-              minLength={10}
-              value={userPassword}
-              onChange={(e) => setUserPassword(e.target.value)}
-              placeholder="Password (10+ chars)"
-              required
-              className="min-h-[40px] rounded-lg border border-[#D1A953]/25 bg-[#061823] px-3 py-1.5 text-xs text-[#F5F2EB]"
-            />
-            <div className="sm:col-span-4 flex justify-end">
-              <button
-                type="submit"
-                className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg bg-[#D1A953] px-4 py-1.5 text-xs font-semibold text-[#061823]"
-              >
-                <Plus className="h-3.5 w-3.5" aria-hidden="true" />
-                <span>Create Team User</span>
-              </button>
-            </div>
-          </form>
+        {sessions.length === 0 ? (
+          <p className="py-4 text-xs text-[#C2D0D6]">No active session records found.</p>
         ) : (
-          <p className="text-xs text-[#C2D0D6]">
-            Team user provisioning is restricted to Administrator accounts.
-          </p>
-        )}
-
-        <div className="divide-y divide-[#D1A953]/12">
-          {users.length === 0 ? (
-            <p className="py-4 text-xs text-[#C2D0D6]">
-              No individual team user accounts provisioned yet.
-            </p>
-          ) : (
-            users.map((u) => (
-              <div key={u.id} className="flex flex-wrap items-center justify-between gap-3 py-3 text-xs">
-                <div>
-                  <p className="font-medium text-[#F5F2EB]">
-                    {u.name} · <span className="font-mono text-[#DFC585]">{u.role}</span>
+          <div className="divide-y divide-[#D1A953]/12">
+            {sessions.slice(0, 15).map((sess) => (
+              <div
+                key={sess.id}
+                className="flex flex-wrap items-center justify-between gap-3 py-3 text-xs"
+              >
+                <div className="space-y-0.5 min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Monitor className="h-3.5 w-3.5 text-[#D1A953] shrink-0" aria-hidden="true" />
+                    <span className="font-medium text-[#F5F2EB]">
+                      {sess.name} ({formatRoleLabel(sess.role)})
+                    </span>
+                    <span className="text-[#C2D0D6]">{sess.email}</span>
+                    {sess.isCurrent && (
+                      <span className="font-mono text-[11px] text-[#DFC585]">· Current</span>
+                    )}
+                    {sess.revokedAt && (
+                      <span className="font-mono text-[11px] text-amber-300">· Revoked</span>
+                    )}
+                  </div>
+                  <p className="font-mono text-[11px] text-[#C2D0D6]/80 truncate">
+                    IP: {sess.ipAddress || 'unknown'} · Expires {formatDateTime(sess.expiresAt)}
                   </p>
-                  <p className="text-[#C2D0D6]">{u.email}</p>
                 </div>
-                {isAdmin && (
+                {!sess.revokedAt && !sess.isCurrent && (
                   <button
                     type="button"
-                    onClick={() => onToggleUserActive(u.id, !u.isActive)}
-                    className="rounded-lg border border-[#D1A953]/25 bg-[#061823] px-3 py-1.5 text-xs text-[#F5F2EB]"
+                    onClick={() => onRevokeSession(sess.id)}
+                    className="rounded-lg border border-[#D1A953]/25 bg-[#061823] px-3 py-1.5 text-xs text-[#F5F2EB] hover:border-amber-400/50 hover:text-amber-200"
                   >
-                    {u.isActive ? 'Active (Disable)' : 'Disabled (Enable)'}
+                    Revoke Session
                   </button>
                 )}
               </div>
-            ))
-          )}
-        </div>
+            ))}
+          </div>
+        )}
       </div>
 
-      {/* Portfolio Case Studies & Brand Assets (Admin Only) */}
-      {isAdmin && (
+      {/* Team Access Control (RBAC) */}
+      {isAdminOrSuper && (
+        <div className="rounded-xl border border-[#D1A953]/20 bg-[#0C2935] p-5 sm:p-6 space-y-5">
+          <div className="border-b border-[#D1A953]/15 pb-3">
+            <h3 className="font-editorial text-lg font-semibold text-[#F5F2EB]">
+              Team Accounts &amp; Role-Based Access
+            </h3>
+            <p className="text-xs text-[#C2D0D6]">
+              Super Admins manage roles, invitations, and security policies; Admins oversee full
+              analytics and reports; Staff manage assigned or unassigned cases.
+            </p>
+          </div>
+
+          {isSuperAdmin ? (
+            <div className="space-y-6">
+              <form onSubmit={handleUserSubmit} className="grid grid-cols-1 gap-3 sm:grid-cols-4">
+                <input
+                  type="text"
+                  value={userName}
+                  onChange={(e) => setUserName(e.target.value)}
+                  placeholder="Full name"
+                  required
+                  className="min-h-[40px] rounded-lg border border-[#D1A953]/25 bg-[#061823] px-3 py-1.5 text-xs text-[#F5F2EB]"
+                />
+                <input
+                  type="email"
+                  value={userEmail}
+                  onChange={(e) => setUserEmail(e.target.value)}
+                  placeholder="Work email"
+                  required
+                  className="min-h-[40px] rounded-lg border border-[#D1A953]/25 bg-[#061823] px-3 py-1.5 text-xs text-[#F5F2EB]"
+                />
+                <select
+                  aria-label="New user role"
+                  value={userRoleInput}
+                  onChange={(e) => setUserRoleInput(e.target.value as AdminRole)}
+                  className="min-h-[40px] rounded-lg border border-[#D1A953]/25 bg-[#061823] px-3 py-1.5 text-xs text-[#F5F2EB]"
+                >
+                  <option value="staff">Staff</option>
+                  <option value="admin">Admin</option>
+                  <option value="super_admin">Super Admin</option>
+                </select>
+                <input
+                  type="password"
+                  minLength={12}
+                  value={userPassword}
+                  onChange={(e) => setUserPassword(e.target.value)}
+                  placeholder="Strong password (12+ chars)"
+                  required
+                  className="min-h-[40px] rounded-lg border border-[#D1A953]/25 bg-[#061823] px-3 py-1.5 text-xs text-[#F5F2EB]"
+                />
+                <div className="sm:col-span-4 flex justify-end">
+                  <button
+                    type="submit"
+                    className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg bg-[#D1A953] px-4 py-1.5 text-xs font-semibold text-[#061823]"
+                  >
+                    <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+                    <span>Create Team User</span>
+                  </button>
+                </div>
+              </form>
+
+              {/* Team Invitations */}
+              <div className="border-t border-[#D1A953]/15 pt-5 space-y-3">
+                <h4 className="font-editorial text-base font-semibold text-[#F5F2EB]">
+                  Invite Team Member (Single-Use Activation Link)
+                </h4>
+                <form onSubmit={handleInviteSubmit} className="grid grid-cols-1 gap-3 sm:grid-cols-4">
+                  <input
+                    type="text"
+                    value={inviteName}
+                    onChange={(e) => setInviteName(e.target.value)}
+                    placeholder="Invitee full name"
+                    required
+                    className="min-h-[40px] rounded-lg border border-[#D1A953]/25 bg-[#061823] px-3 py-1.5 text-xs text-[#F5F2EB]"
+                  />
+                  <input
+                    type="email"
+                    value={inviteEmail}
+                    onChange={(e) => setInviteEmail(e.target.value)}
+                    placeholder="Invitee email"
+                    required
+                    className="min-h-[40px] rounded-lg border border-[#D1A953]/25 bg-[#061823] px-3 py-1.5 text-xs text-[#F5F2EB]"
+                  />
+                  <select
+                    aria-label="Invitee role"
+                    value={inviteRole}
+                    onChange={(e) => setInviteRole(e.target.value as AdminRole)}
+                    className="min-h-[40px] rounded-lg border border-[#D1A953]/25 bg-[#061823] px-3 py-1.5 text-xs text-[#F5F2EB]"
+                  >
+                    <option value="staff">Staff</option>
+                    <option value="admin">Admin</option>
+                    <option value="super_admin">Super Admin</option>
+                  </select>
+                  <button
+                    type="submit"
+                    className="inline-flex min-h-[40px] items-center justify-center gap-1.5 rounded-lg border border-[#D1A953]/40 bg-[#123846] px-4 py-1.5 text-xs font-semibold text-[#F5F2EB] hover:bg-[#194B5C]"
+                  >
+                    <UserPlus className="h-3.5 w-3.5" aria-hidden="true" />
+                    <span>Create Invite</span>
+                  </button>
+                </form>
+
+                {generatedInviteUrl && (
+                  <div className="rounded-lg border border-[#D1A953]/30 bg-[#061823] p-3 text-xs space-y-1">
+                    <p className="text-[#DFC585] font-medium">
+                      Email mailer is not configured; share this single-use 72-hour invite link
+                      securely:
+                    </p>
+                    <p className="font-mono text-[#F5F2EB] break-all select-all">
+                      {generatedInviteUrl}
+                    </p>
+                  </div>
+                )}
+
+                {invitations.length > 0 && (
+                  <div className="divide-y divide-[#D1A953]/10">
+                    {invitations.slice(0, 8).map((inv) => (
+                      <div
+                        key={inv.id}
+                        className="flex flex-wrap items-center justify-between gap-2 py-2 text-xs"
+                      >
+                        <span className="text-[#F5F2EB]">
+                          {inv.name} ({inv.email}) ·{' '}
+                          <span className="font-mono text-[#DFC585]">
+                            {formatRoleLabel(inv.role)}
+                          </span>
+                        </span>
+                        <span className="font-mono text-[11px] text-[#C2D0D6]">
+                          {inv.acceptedAt
+                            ? `Accepted ${formatDateTime(inv.acceptedAt)}`
+                            : `Expires ${formatDateTime(inv.expiresAt)}`}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : (
+            <p className="text-xs text-[#C2D0D6]">
+              Creating, inviting, or deactivating team accounts is restricted to Super
+              Administrators.
+            </p>
+          )}
+
+          <div className="divide-y divide-[#D1A953]/12">
+            {users.length === 0 ? (
+              <p className="py-4 text-xs text-[#C2D0D6]">
+                No individual team user accounts provisioned yet.
+              </p>
+            ) : (
+              users.map((u) => (
+                <div
+                  key={u.id}
+                  className="flex flex-wrap items-center justify-between gap-3 py-3 text-xs"
+                >
+                  <div>
+                    <p className="font-medium text-[#F5F2EB]">
+                      {u.name} ·{' '}
+                      <span className="font-mono text-[#DFC585]">{formatRoleLabel(u.role)}</span>
+                      {u.mfaEnabled && (
+                        <span className="ml-2 font-mono text-[11px] text-emerald-300">
+                          [MFA]
+                        </span>
+                      )}
+                    </p>
+                    <p className="text-[#C2D0D6]">{u.email}</p>
+                  </div>
+                  {isSuperAdmin && (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <select
+                        aria-label={`Change role for ${u.name}`}
+                        value={u.role}
+                        onChange={(e) => onUpdateUser(u.id, { role: e.target.value as AdminRole })}
+                        className="min-h-[34px] rounded-lg border border-[#D1A953]/25 bg-[#061823] px-2.5 py-1 text-xs text-[#F5F2EB]"
+                      >
+                        <option value="staff">Staff</option>
+                        <option value="admin">Admin</option>
+                        <option value="super_admin">Super Admin</option>
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => onUpdateUser(u.id, { isActive: !u.isActive })}
+                        className="rounded-lg border border-[#D1A953]/25 bg-[#061823] px-3 py-1.5 text-xs text-[#F5F2EB]"
+                      >
+                        {u.isActive ? 'Active (Disable)' : 'Disabled (Enable)'}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Portfolio Case Studies & Brand Assets (Super Admin Only) */}
+      {isSuperAdmin && (
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
           <div className="lg:col-span-7 rounded-xl border border-[#D1A953]/20 bg-[#0C2935] p-5 sm:p-6 space-y-4">
             <h3 className="font-editorial text-lg font-semibold text-[#F5F2EB] border-b border-[#D1A953]/15 pb-3">

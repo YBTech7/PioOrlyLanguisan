@@ -13,15 +13,20 @@ import {
   Menu,
   RefreshCw,
   Settings,
+  ShieldAlert,
   Timer,
   X,
 } from 'lucide-react';
+import { adminNavToPath, type AdminNavId } from '../lib/adminRouter';
 import { apiFetch, ApiError } from '../lib/apiClient';
 import { computeDashboardAnalytics } from '../lib/caseAnalytics';
 import type {
+  AdminInvitation,
   AdminNotification,
   AdminRole,
+  AdminSessionInfo,
   AdminUser,
+  AuthAuditEvent,
   BrandSettings,
   CaseActivityEntry,
   CaseDetailPayload,
@@ -36,7 +41,7 @@ import type {
 } from '../types';
 import { BrandMark } from './BrandMark';
 import { AdminAnalyticsView } from './admin/AdminAnalyticsView';
-import { AdminAuthScreen, type AuthSessionInfo } from './admin/AdminAuthScreen';
+import type { AuthSessionInfo } from './admin/AdminLoginPage';
 import { AdminCaseDetailView } from './admin/AdminCaseDetailView';
 import { AdminCasesView, type CasesFilterState } from './admin/AdminCasesView';
 import { AdminOverviewView, type DatePreset } from './admin/AdminOverviewView';
@@ -45,27 +50,26 @@ import {
   AdminActivityView,
   AdminNotificationsView,
   AdminSettingsView,
+  formatRoleLabel,
 } from './admin/AdminSecondaryViews';
 
-interface AdminPortalProps {
-  open: boolean;
-  onClose: () => void;
+export interface AdminPortalProps {
+  session: AuthSessionInfo;
+  authStatus: {
+    hasAdminUsers: boolean;
+    bootstrapConfigured: boolean;
+    passcodeConfigured: boolean;
+    storageMode: string;
+    mailerConfigured: boolean;
+  };
+  routeNav: AdminNavId;
+  routeCaseId: string | null;
+  onNavigatePath: (appPath: string) => void;
+  onLogout: () => Promise<void>;
+  onSessionExpired: () => void;
+  onSessionUserUpdate: (patch: Partial<AuthSessionInfo['user']>) => void;
   onContentUpdated: () => void;
 }
-
-type AdminNavId =
-  | 'overview'
-  | 'all-cases'
-  | 'new-requests'
-  | 'pending'
-  | 'follow-up'
-  | 'completed'
-  | 'service-analytics'
-  | 'target-timelines'
-  | 'reports'
-  | 'notifications'
-  | 'activity'
-  | 'settings';
 
 const EMPTY_ANALYTICS: DashboardAnalytics = computeDashboardAnalytics([]);
 const EMPTY_CASE_LIST: CaseListResponse = {
@@ -97,29 +101,27 @@ function computeDateBounds(
   };
 }
 
+function navToStatusFilter(navId: AdminNavId): CaseStatus | 'All' {
+  if (navId === 'new-requests') return 'New';
+  if (navId === 'pending') return 'Pending';
+  if (navId === 'follow-up') return 'Follow Up';
+  if (navId === 'completed') return 'Completed';
+  return 'All';
+}
+
 export const AdminPortal: React.FC<AdminPortalProps> = ({
-  open,
-  onClose,
+  session,
+  authStatus,
+  routeNav,
+  routeCaseId,
+  onNavigatePath,
+  onLogout,
+  onSessionExpired,
+  onSessionUserUpdate,
   onContentUpdated,
 }) => {
-  const [session, setSession] = useState<AuthSessionInfo | null>(null);
-  const [authStatus, setAuthStatus] = useState<{
-    hasAdminUsers: boolean;
-    bootstrapConfigured: boolean;
-    passcodeConfigured: boolean;
-    storageMode: string;
-    mailerConfigured: boolean;
-  }>({
-    hasAdminUsers: false,
-    bootstrapConfigured: false,
-    passcodeConfigured: true,
-    storageMode: 'file',
-    mailerConfigured: false,
-  });
-
-  const [activeNav, setActiveNav] = useState<AdminNavId>('overview');
-  const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null);
   const [caseDetail, setCaseDetail] = useState<CaseDetailPayload | null>(null);
+  const [caseDetailError, setCaseDetailError] = useState<string | null>(null);
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
@@ -132,9 +134,9 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   // Data state
   const [analytics, setAnalytics] = useState<DashboardAnalytics>(EMPTY_ANALYTICS);
   const [caseList, setCaseList] = useState<CaseListResponse>(EMPTY_CASE_LIST);
-  const [caseFilters, setCaseFilters] = useState<CasesFilterState>({
+  const [caseFilters, setCaseFilters] = useState<CasesFilterState>(() => ({
     search: '',
-    status: 'All',
+    status: navToStatusFilter(routeNav),
     serviceDomain: 'All',
     timeline: 'All',
     assignedTo: 'All',
@@ -143,10 +145,13 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
     sortBy: 'submittedAt',
     sortDir: 'desc',
     page: 1,
-  });
+  }));
   const [casesLoading, setCasesLoading] = useState(false);
 
   const [users, setUsers] = useState<AdminUser[]>([]);
+  const [invitations, setInvitations] = useState<AdminInvitation[]>([]);
+  const [sessions, setSessions] = useState<AdminSessionInfo[]>([]);
+  const [auditEvents, setAuditEvents] = useState<AuthAuditEvent[]>([]);
   const [notifications, setNotifications] = useState<AdminNotification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [activity, setActivity] = useState<CaseActivityEntry[]>([]);
@@ -160,79 +165,87 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
 
   const [toast, setToast] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
 
+  const isSuperAdmin = session.user.role === 'super_admin';
+  const isAdminOrSuper = session.user.role === 'super_admin' || session.user.role === 'admin';
+
   const showToast = useCallback((kind: 'ok' | 'err', text: string) => {
     setToast({ kind, text });
   }, []);
 
+  const wipeLocalState = useCallback(() => {
+    setCaseDetail(null);
+    setCaseDetailError(null);
+    setAnalytics(EMPTY_ANALYTICS);
+    setCaseList(EMPTY_CASE_LIST);
+    setUsers([]);
+    setInvitations([]);
+    setSessions([]);
+    setAuditEvents([]);
+    setNotifications([]);
+    setUnreadCount(0);
+    setActivity([]);
+    setProjects([]);
+    setToast(null);
+  }, []);
+
+  const handleApiError = useCallback(
+    (err: unknown, fallbackMessage: string) => {
+      if (err instanceof ApiError && (err.status === 401 || err.code === 'SESSION_EXPIRED')) {
+        wipeLocalState();
+        onSessionExpired();
+        return;
+      }
+      showToast('err', err instanceof Error ? err.message : fallbackMessage);
+    },
+    [wipeLocalState, onSessionExpired, showToast]
+  );
+
+  const authHeaders = useCallback((): Record<string, string> => {
+    return session.token ? { Authorization: `Bearer ${session.token}` } : {};
+  }, [session.token]);
+
+  // Synchronize URL-selected status filter
   useEffect(() => {
-    if (!open) return;
+    if (['all-cases', 'new-requests', 'pending', 'follow-up', 'completed'].includes(routeNav)) {
+      const targetStatus = navToStatusFilter(routeNav);
+      setCaseFilters((prev) =>
+        prev.status === targetStatus ? prev : { ...prev, status: targetStatus, page: 1 }
+      );
+    }
+  }, [routeNav]);
+
+  useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         if (mobileDrawerOpen) {
           setMobileDrawerOpen(false);
-        } else if (selectedCaseId) {
-          setSelectedCaseId(null);
-          setCaseDetail(null);
-        } else {
-          onClose();
+        } else if (routeCaseId) {
+          onNavigatePath('/admin/cases');
         }
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [open, mobileDrawerOpen, selectedCaseId, onClose]);
+  }, [mobileDrawerOpen, routeCaseId, onNavigatePath]);
 
-  const loadAuthBootstrapStatus = useCallback(async () => {
-    try {
-      const status = await apiFetch<typeof authStatus>('/api/auth/status');
-      setAuthStatus(status);
-    } catch {
-      // Keep default status if backend probe fails
+  const loadAnalytics = useCallback(async () => {
+    if (!isAdminOrSuper) return;
+    const bounds = computeDateBounds(datePreset, customFrom, customTo);
+    const params = new URLSearchParams();
+    if (bounds.fromIso) params.set('from', bounds.fromIso);
+    if (bounds.toIso) params.set('to', bounds.toIso);
+    if (comparePrevious && bounds.fromIso && bounds.toIso) {
+      params.set('comparePrevious', 'true');
     }
-    try {
-      const me = await apiFetch<{ user: AuthSessionInfo['user']; csrfToken: string }>('/api/auth/me');
-      if (me.user) {
-        setSession({ token: '', csrfToken: me.csrfToken, user: me.user });
-      }
-    } catch {
-      // Not signed in via cookie
-    }
-  }, []);
-
-  useEffect(() => {
-    if (open && !session) {
-      loadAuthBootstrapStatus();
-    }
-  }, [open, session, loadAuthBootstrapStatus]);
-
-  const authHeaders = useCallback(
-    (authToken?: string): Record<string, string> => {
-      const tok = authToken ?? session?.token ?? '';
-      return tok ? { Authorization: `Bearer ${tok}` } : {};
-    },
-    [session]
-  );
-
-  const loadAnalytics = useCallback(
-    async (authToken?: string) => {
-      const bounds = computeDateBounds(datePreset, customFrom, customTo);
-      const params = new URLSearchParams();
-      if (bounds.fromIso) params.set('from', bounds.fromIso);
-      if (bounds.toIso) params.set('to', bounds.toIso);
-      if (comparePrevious && bounds.fromIso && bounds.toIso) {
-        params.set('comparePrevious', 'true');
-      }
-      const data = await apiFetch<DashboardAnalytics>(
-        `/api/admin/analytics?${params.toString()}`,
-        { headers: authHeaders(authToken) }
-      );
-      setAnalytics(data);
-    },
-    [datePreset, customFrom, customTo, comparePrevious, authHeaders]
-  );
+    const data = await apiFetch<DashboardAnalytics>(
+      `/api/admin/analytics?${params.toString()}`,
+      { headers: authHeaders() }
+    );
+    setAnalytics(data);
+  }, [isAdminOrSuper, datePreset, customFrom, customTo, comparePrevious, authHeaders]);
 
   const loadCases = useCallback(
-    async (filtersOverride?: CasesFilterState, authToken?: string) => {
+    async (filtersOverride?: CasesFilterState) => {
       const f = filtersOverride ?? caseFilters;
       setCasesLoading(true);
       try {
@@ -251,7 +264,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
 
         const data = await apiFetch<CaseListResponse>(
           `/api/admin/cases?${params.toString()}`,
-          { headers: authHeaders(authToken) }
+          { headers: authHeaders() }
         );
         setCaseList(data);
       } finally {
@@ -261,106 +274,152 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
     [caseFilters, authHeaders]
   );
 
-  const loadNotifications = useCallback(
-    async (authToken?: string) => {
-      const data = await apiFetch<{ notifications: AdminNotification[]; unreadCount: number }>(
-        '/api/admin/notifications',
-        { headers: authHeaders(authToken) }
-      );
-      setNotifications(data.notifications || []);
-      setUnreadCount(data.unreadCount || 0);
-    },
-    [authHeaders]
-  );
+  const loadNotifications = useCallback(async () => {
+    const data = await apiFetch<{ notifications: AdminNotification[]; unreadCount: number }>(
+      '/api/admin/notifications',
+      { headers: authHeaders() }
+    );
+    setNotifications(data.notifications || []);
+    setUnreadCount(data.unreadCount || 0);
+  }, [authHeaders]);
 
-  const loadActivity = useCallback(
-    async (authToken?: string) => {
-      const data = await apiFetch<{ activity: CaseActivityEntry[] }>(
-        '/api/admin/activity?limit=150',
-        { headers: authHeaders(authToken) }
-      );
-      setActivity(data.activity || []);
-    },
-    [authHeaders]
-  );
+  const loadActivity = useCallback(async () => {
+    if (!isAdminOrSuper) return;
+    const data = await apiFetch<{ activity: CaseActivityEntry[] }>(
+      '/api/admin/activity?limit=150',
+      { headers: authHeaders() }
+    );
+    setActivity(data.activity || []);
+  }, [isAdminOrSuper, authHeaders]);
 
-  const loadFullWorkspace = useCallback(
-    async (authToken?: string) => {
-      try {
-        const dash = await apiFetch<{
-          inquiries: CaseListResponse['items'];
-          projects: ProjectCase[];
-          brand: BrandSettings;
-          analytics?: DashboardAnalytics;
-          users?: AdminUser[];
-          unreadNotifications?: number;
-        }>('/api/admin/dashboard', { headers: authHeaders(authToken) });
+  const loadSessions = useCallback(async () => {
+    const data = await apiFetch<{ sessions: AdminSessionInfo[] }>('/api/admin/sessions', {
+      headers: authHeaders(),
+    });
+    setSessions(data.sessions || []);
+  }, [authHeaders]);
 
-        setProjects(dash.projects || []);
-        if (dash.brand) setBrand(dash.brand);
-        if (dash.users) setUsers(dash.users);
-        if (dash.analytics) setAnalytics(dash.analytics);
-        if (typeof dash.unreadNotifications === 'number') {
-          setUnreadCount(dash.unreadNotifications);
-        }
-
-        await Promise.all([
-          loadCases(undefined, authToken),
-          loadNotifications(authToken).catch(() => {}),
-          loadActivity(authToken).catch(() => {}),
-        ]);
-      } catch (err) {
-        if (err instanceof ApiError && err.status === 401) {
-          setSession(null);
-        }
-        showToast('err', err instanceof Error ? err.message : 'Unable to load dashboard.');
-      }
-    },
-    [authHeaders, loadCases, loadNotifications, loadActivity, showToast]
-  );
-
-  useEffect(() => {
-    if (open && session) {
-      loadAnalytics().catch(() => {});
-    }
-  }, [open, session, datePreset, customFrom, customTo, comparePrevious, loadAnalytics]);
-
-  useEffect(() => {
-    if (open && session) {
-      loadCases().catch(() => {});
-    }
-  }, [open, session, caseFilters, loadCases]);
-
-  const handleOpenCase = async (caseId: string) => {
-    if (!session) return;
-    try {
-      const detail = await apiFetch<CaseDetailPayload>(`/api/admin/cases/${caseId}`, {
+  const loadSecurityExtras = useCallback(async () => {
+    if (!isSuperAdmin) return;
+    const [invRes, auditRes] = await Promise.all([
+      apiFetch<{ invitations: AdminInvitation[] }>('/api/admin/invitations', {
         headers: authHeaders(),
-      });
-      setSelectedCaseId(caseId);
-      setCaseDetail(detail);
+      }).catch(() => ({ invitations: [] })),
+      apiFetch<{ events: AuthAuditEvent[] }>('/api/admin/audit-events?limit=100', {
+        headers: authHeaders(),
+      }).catch(() => ({ events: [] })),
+    ]);
+    setInvitations(invRes.invitations || []);
+    setAuditEvents(auditRes.events || []);
+  }, [isSuperAdmin, authHeaders]);
+
+  const loadFullWorkspace = useCallback(async () => {
+    try {
+      const dash = await apiFetch<{
+        inquiries: CaseListResponse['items'];
+        projects: ProjectCase[];
+        brand: BrandSettings;
+        analytics?: DashboardAnalytics;
+        users?: AdminUser[];
+        unreadNotifications?: number;
+      }>('/api/admin/dashboard', { headers: authHeaders() });
+
+      setProjects(dash.projects || []);
+      if (dash.brand) setBrand(dash.brand);
+      if (dash.users) setUsers(dash.users);
+      if (dash.analytics) setAnalytics(dash.analytics);
+      if (typeof dash.unreadNotifications === 'number') {
+        setUnreadCount(dash.unreadNotifications);
+      }
+
+      const tasks: Promise<unknown>[] = [
+        loadCases(),
+        loadNotifications().catch(() => {}),
+        loadSessions().catch(() => {}),
+      ];
+      if (isAdminOrSuper) {
+        tasks.push(loadActivity().catch(() => {}));
+      }
+      if (isSuperAdmin) {
+        tasks.push(loadSecurityExtras().catch(() => {}));
+      }
+      await Promise.all(tasks);
     } catch (err) {
-      showToast('err', err instanceof Error ? err.message : 'Unable to open case details.');
+      handleApiError(err, 'Unable to load dashboard.');
     }
+  }, [
+    authHeaders,
+    loadCases,
+    loadNotifications,
+    loadSessions,
+    isAdminOrSuper,
+    loadActivity,
+    isSuperAdmin,
+    loadSecurityExtras,
+    handleApiError,
+  ]);
+
+  useEffect(() => {
+    loadFullWorkspace();
+  }, [loadFullWorkspace]);
+
+  useEffect(() => {
+    if (isAdminOrSuper) {
+      loadAnalytics().catch((err) => {
+        if (err instanceof ApiError && (err.status === 401 || err.code === 'SESSION_EXPIRED')) {
+          handleApiError(err, 'Session expired.');
+        }
+      });
+    }
+  }, [isAdminOrSuper, datePreset, customFrom, customTo, comparePrevious, loadAnalytics, handleApiError]);
+
+  useEffect(() => {
+    loadCases().catch((err) => {
+      if (err instanceof ApiError && (err.status === 401 || err.code === 'SESSION_EXPIRED')) {
+        handleApiError(err, 'Session expired.');
+      }
+    });
+  }, [caseFilters, loadCases, handleApiError]);
+
+  // Synchronize selected case detail with /admin/cases/:caseId route
+  useEffect(() => {
+    if (!routeCaseId) {
+      setCaseDetail(null);
+      setCaseDetailError(null);
+      return;
+    }
+    let cancelled = false;
+    setCaseDetailError(null);
+    apiFetch<CaseDetailPayload>(`/api/admin/cases/${encodeURIComponent(routeCaseId)}`, {
+      headers: authHeaders(),
+    })
+      .then((detail) => {
+        if (!cancelled) setCaseDetail(detail);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        if (err instanceof ApiError && (err.status === 401 || err.code === 'SESSION_EXPIRED')) {
+          handleApiError(err, 'Session expired.');
+          return;
+        }
+        setCaseDetail(null);
+        setCaseDetailError(
+          err instanceof Error ? err.message : 'Unable to open requested consultation case.'
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [routeCaseId, authHeaders, handleApiError]);
+
+  const handleOpenCase = (caseId: string) => {
+    setMobileDrawerOpen(false);
+    onNavigatePath(adminNavToPath('all-cases', caseId));
   };
 
   const handleNavSelect = (navId: AdminNavId) => {
-    setActiveNav(navId);
-    setSelectedCaseId(null);
-    setCaseDetail(null);
     setMobileDrawerOpen(false);
-
-    if (navId === 'all-cases') {
-      setCaseFilters((prev) => ({ ...prev, status: 'All', page: 1 }));
-    } else if (navId === 'new-requests') {
-      setCaseFilters((prev) => ({ ...prev, status: 'New', page: 1 }));
-    } else if (navId === 'pending') {
-      setCaseFilters((prev) => ({ ...prev, status: 'Pending', page: 1 }));
-    } else if (navId === 'follow-up') {
-      setCaseFilters((prev) => ({ ...prev, status: 'Follow Up', page: 1 }));
-    } else if (navId === 'completed') {
-      setCaseFilters((prev) => ({ ...prev, status: 'Completed', page: 1 }));
-    }
+    onNavigatePath(adminNavToPath(navId));
   };
 
   const handleUpdateCase = async (
@@ -378,7 +437,6 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
       timeline?: TargetTimelineValue;
     }
   ) => {
-    if (!session) return;
     try {
       const data = await apiFetch<{ caseRecord: CaseDetailPayload['caseRecord'] }>(
         `/api/admin/cases/${caseId}`,
@@ -394,20 +452,24 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
           ? `Updated ${data.caseRecord.caseNumber} status to ${updates.status}.`
           : `Saved updates for ${data.caseRecord.caseNumber}.`
       );
-      await Promise.all([loadAnalytics(), loadCases(), loadActivity(), loadNotifications()]);
-      if (selectedCaseId === caseId) {
+      await Promise.all([
+        isAdminOrSuper ? loadAnalytics() : loadFullWorkspace(),
+        loadCases(),
+        isAdminOrSuper ? loadActivity() : Promise.resolve(),
+        loadNotifications(),
+      ]);
+      if (routeCaseId === caseId) {
         const refreshed = await apiFetch<CaseDetailPayload>(`/api/admin/cases/${caseId}`, {
           headers: authHeaders(),
         });
         setCaseDetail(refreshed);
       }
     } catch (err) {
-      showToast('err', err instanceof Error ? err.message : 'Unable to update case.');
+      handleApiError(err, 'Unable to update case.');
     }
   };
 
   const handleAddNote = async (caseId: string, content: string) => {
-    if (!session) return;
     try {
       await apiFetch(`/api/admin/cases/${caseId}/notes`, {
         method: 'POST',
@@ -419,23 +481,70 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
         headers: authHeaders(),
       });
       setCaseDetail(refreshed);
-      await loadActivity();
+      if (isAdminOrSuper) await loadActivity();
     } catch (err) {
-      showToast('err', err instanceof Error ? err.message : 'Unable to save note.');
+      handleApiError(err, 'Unable to save note.');
     }
   };
 
-  const handleLogout = async () => {
-    if (session) {
-      await apiFetch('/api/admin/logout', {
+  const handleLogoutClick = async () => {
+    wipeLocalState();
+    await onLogout();
+  };
+
+  const handleChangePassword = async (currentPassword: string, newPassword: string) => {
+    try {
+      const res = await apiFetch<{ message?: string }>('/api/auth/change-password', {
         method: 'POST',
         headers: authHeaders(),
-      }).catch(() => {});
+        body: JSON.stringify({ currentPassword, newPassword }),
+      });
+      showToast('ok', res.message || 'Password updated cleanly.');
+      await loadSessions();
+    } catch (err) {
+      handleApiError(err, 'Unable to update password.');
     }
-    setSession(null);
-    setSelectedCaseId(null);
-    setCaseDetail(null);
-    setToast(null);
+  };
+
+  const handleSetupMfa = async (): Promise<{ secret: string; otpauthUrl: string } | null> => {
+    try {
+      return await apiFetch<{ secret: string; otpauthUrl: string }>('/api/auth/mfa/setup', {
+        method: 'POST',
+        headers: authHeaders(),
+      });
+    } catch (err) {
+      handleApiError(err, 'Unable to initiate MFA setup.');
+      return null;
+    }
+  };
+
+  const handleEnableMfa = async (secret: string, code: string) => {
+    try {
+      await apiFetch('/api/auth/mfa/enable', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ secret, code }),
+      });
+      onSessionUserUpdate({ mfaEnabled: true });
+      showToast('ok', 'Two-factor authenticator verification enabled.');
+      await loadSecurityExtras();
+    } catch (err) {
+      handleApiError(err, 'Unable to verify MFA code.');
+    }
+  };
+
+  const handleDisableMfa = async () => {
+    try {
+      await apiFetch('/api/auth/mfa/disable', {
+        method: 'POST',
+        headers: authHeaders(),
+      });
+      onSessionUserUpdate({ mfaEnabled: false });
+      showToast('ok', 'Two-factor authentication disabled.');
+      await loadSecurityExtras();
+    } catch (err) {
+      handleApiError(err, 'Unable to disable MFA.');
+    }
   };
 
   const handleCreateUser = async (payload: {
@@ -444,7 +553,6 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
     role: AdminRole;
     password: string;
   }) => {
-    if (!session) return;
     try {
       await apiFetch('/api/admin/users', {
         method: 'POST',
@@ -455,28 +563,73 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
         headers: authHeaders(),
       });
       setUsers(res.users);
-      showToast('ok', `Provisioned ${payload.role} account for ${payload.email}.`);
-      await loadActivity();
+      showToast('ok', `Provisioned ${formatRoleLabel(payload.role)} account for ${payload.email}.`);
+      await Promise.all([loadActivity(), loadSecurityExtras()]);
     } catch (err) {
-      showToast('err', err instanceof Error ? err.message : 'Unable to create user.');
+      handleApiError(err, 'Unable to create user.');
     }
   };
 
-  const handleToggleUserActive = async (userId: string, isActive: boolean) => {
-    if (!session) return;
+  const handleUpdateUser = async (
+    userId: string,
+    changes: { role?: AdminRole; isActive?: boolean }
+  ) => {
     try {
       await apiFetch(`/api/admin/users/${userId}`, {
         method: 'PATCH',
         headers: authHeaders(),
-        body: JSON.stringify({ isActive }),
+        body: JSON.stringify(changes),
       });
       const res = await apiFetch<{ users: AdminUser[] }>('/api/admin/users', {
         headers: authHeaders(),
       });
       setUsers(res.users);
-      showToast('ok', isActive ? 'User account enabled.' : 'User account disabled.');
+      showToast('ok', 'Team account updated and affected sessions synchronized.');
+      await Promise.all([loadSessions(), loadSecurityExtras()]);
     } catch (err) {
-      showToast('err', err instanceof Error ? err.message : 'Unable to update user.');
+      handleApiError(err, 'Unable to update user.');
+    }
+  };
+
+  const handleCreateInvitation = async (payload: {
+    email: string;
+    name: string;
+    role: AdminRole;
+  }): Promise<{ emailed: boolean; manualInviteUrl?: string } | null> => {
+    try {
+      const res = await apiFetch<{
+        invitation: AdminInvitation;
+        emailed: boolean;
+        manualInviteUrl?: string;
+      }>('/api/admin/invitations', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify(payload),
+      });
+      showToast(
+        'ok',
+        res.emailed
+          ? `Invitation email sent to ${payload.email}.`
+          : `Created single-use invitation for ${payload.email}.`
+      );
+      await loadSecurityExtras();
+      return { emailed: res.emailed, manualInviteUrl: res.manualInviteUrl };
+    } catch (err) {
+      handleApiError(err, 'Unable to create invitation.');
+      return null;
+    }
+  };
+
+  const handleRevokeSession = async (sessionId: string) => {
+    try {
+      await apiFetch(`/api/admin/sessions/${sessionId}/revoke`, {
+        method: 'POST',
+        headers: authHeaders(),
+      });
+      showToast('ok', 'Active session revoked.');
+      await Promise.all([loadSessions(), loadSecurityExtras()]);
+    } catch (err) {
+      handleApiError(err, 'Unable to revoke session.');
     }
   };
 
@@ -488,7 +641,6 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
     metricLabel: string;
     summary: string;
   }) => {
-    if (!session) return;
     try {
       const data = await apiFetch<{ projects: ProjectCase[] }>('/api/admin/projects', {
         method: 'POST',
@@ -499,12 +651,11 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
       showToast('ok', 'Portfolio case study added.');
       onContentUpdated();
     } catch (err) {
-      showToast('err', err instanceof Error ? err.message : 'Unable to add blueprint.');
+      handleApiError(err, 'Unable to add blueprint.');
     }
   };
 
   const handleDeleteProject = async (id: string) => {
-    if (!session) return;
     try {
       const data = await apiFetch<{ projects: ProjectCase[] }>(`/api/admin/projects/${id}`, {
         method: 'DELETE',
@@ -514,12 +665,12 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
       showToast('ok', 'Portfolio case study removed.');
       onContentUpdated();
     } catch (err) {
-      showToast('err', err instanceof Error ? err.message : 'Unable to remove blueprint.');
+      handleApiError(err, 'Unable to remove blueprint.');
     }
   };
 
   const handleUploadLogo = (file: File | undefined) => {
-    if (!file || !session) return;
+    if (!file) return;
     if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
       showToast('err', 'Only PNG, JPEG, or WebP logo files are permitted.');
       return;
@@ -542,14 +693,13 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
         showToast('ok', 'Brand logo updated.');
         onContentUpdated();
       } catch (err) {
-        showToast('err', err instanceof Error ? err.message : 'Unable to save logo.');
+        handleApiError(err, 'Unable to save logo.');
       }
     };
     reader.readAsDataURL(file);
   };
 
   const handleResetLogo = async () => {
-    if (!session) return;
     try {
       const data = await apiFetch<{ brand: BrandSettings }>('/api/admin/brand', {
         method: 'POST',
@@ -560,17 +710,16 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
       showToast('ok', 'Restored default circular emblem.');
       onContentUpdated();
     } catch (err) {
-      showToast('err', err instanceof Error ? err.message : 'Unable to restore emblem.');
+      handleApiError(err, 'Unable to restore emblem.');
     }
   };
 
-  if (!open) return null;
-
-  const navItems: Array<{
+  const allNavItems: Array<{
     id: AdminNavId;
     label: string;
     icon: React.ComponentType<{ className?: string }>;
     badge?: number;
+    adminOnly?: boolean;
   }> = [
     { id: 'overview', label: 'Overview', icon: LayoutDashboard },
     { id: 'all-cases', label: 'All Cases', icon: FolderKanban, badge: caseList.statusCounts.All },
@@ -588,26 +737,32 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
       icon: CheckCircle2,
       badge: caseList.statusCounts.Completed,
     },
-    { id: 'service-analytics', label: 'Service Domain Analytics', icon: BarChart3 },
-    { id: 'target-timelines', label: 'Target Timelines', icon: Timer },
-    { id: 'reports', label: 'Reports and Exports', icon: FileSpreadsheet },
+    { id: 'service-analytics', label: 'Service Domain Analytics', icon: BarChart3, adminOnly: true },
+    { id: 'target-timelines', label: 'Target Timelines', icon: Timer, adminOnly: true },
+    { id: 'reports', label: 'Reports and Exports', icon: FileSpreadsheet, adminOnly: true },
     {
       id: 'notifications',
       label: 'Notifications',
       icon: Bell,
       badge: unreadCount > 0 ? unreadCount : undefined,
     },
-    { id: 'activity', label: 'Activity Log', icon: Activity },
+    { id: 'activity', label: 'Activity Log', icon: Activity, adminOnly: true },
     { id: 'settings', label: 'Settings', icon: Settings },
   ];
 
-  const activeTitle = selectedCaseId
-    ? `Case Detail — ${caseDetail?.caseRecord.caseNumber || selectedCaseId}`
-    : navItems.find((i) => i.id === activeNav)?.label || 'Overview';
+  const navItems = allNavItems.filter((item) => !item.adminOnly || isAdminOrSuper);
+
+  const activeTitle = routeCaseId
+    ? `Case Detail — ${caseDetail?.caseRecord.caseNumber || routeCaseId}`
+    : allNavItems.find((i) => i.id === routeNav)?.label || 'Overview';
 
   const isCaseListView =
-    !selectedCaseId &&
-    ['all-cases', 'new-requests', 'pending', 'follow-up', 'completed'].includes(activeNav);
+    !routeCaseId &&
+    ['all-cases', 'new-requests', 'pending', 'follow-up', 'completed'].includes(routeNav);
+
+  const isRestrictedRoute =
+    !isAdminOrSuper &&
+    ['service-analytics', 'target-timelines', 'reports', 'activity'].includes(routeNav);
 
   const renderSidebarNav = (compact = false) => (
     <div className="flex h-full flex-col justify-between p-4">
@@ -627,12 +782,13 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
         <nav aria-label="Admin Navigation" className="space-y-1">
           {navItems.map((item) => {
             const Icon = item.icon;
-            const isActive = !selectedCaseId && activeNav === item.id;
+            const isActive = !routeCaseId && routeNav === item.id;
             return (
               <button
                 key={item.id}
                 type="button"
                 onClick={() => handleNavSelect(item.id)}
+                aria-current={isActive ? 'page' : undefined}
                 className={`flex min-h-[40px] w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#D1A953] ${
                   isActive
                     ? 'bg-[#D1A953] text-[#061823]'
@@ -661,7 +817,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
       <div className="border-t border-[#D1A953]/15 pt-3 space-y-1">
         <button
           type="button"
-          onClick={handleLogout}
+          onClick={handleLogoutClick}
           className="flex min-h-[40px] w-full items-center gap-2.5 rounded-lg px-3 py-2 text-xs font-medium text-[#C2D0D6] hover:bg-[#123846]/70 hover:text-amber-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#D1A953]"
         >
           <LogOut className="h-4 w-4 shrink-0" aria-hidden="true" />
@@ -672,230 +828,263 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   );
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="admin-portal-title"
-      className="fixed inset-0 z-50 overflow-y-auto bg-[#061823] text-[#F5F2EB]"
-    >
-      {!session ? (
-        <AdminAuthScreen
-          hasAdminUsers={authStatus.hasAdminUsers}
-          bootstrapConfigured={authStatus.bootstrapConfigured}
-          passcodeConfigured={authStatus.passcodeConfigured}
-          onAuthenticated={(auth) => {
-            setSession(auth);
-            loadFullWorkspace(auth.token);
-          }}
-          onClose={onClose}
-        />
-      ) : (
-        <div className="flex min-h-screen">
-          {/* Desktop & Tablet Collapsible Sidebar */}
-          <aside
-            className={`hidden md:flex shrink-0 flex-col border-r border-[#D1A953]/18 bg-[#081F2B] transition-all ${
-              sidebarCollapsed ? 'w-[72px]' : 'w-64'
-            }`}
-          >
-            {renderSidebarNav(sidebarCollapsed)}
-          </aside>
+    <div className="min-h-screen bg-[#061823] text-[#F5F2EB]">
+      <div className="flex min-h-screen">
+        {/* Desktop & Tablet Collapsible Sidebar */}
+        <aside
+          className={`hidden md:flex shrink-0 flex-col border-r border-[#D1A953]/18 bg-[#081F2B] transition-all ${
+            sidebarCollapsed ? 'w-[72px]' : 'w-64'
+          }`}
+        >
+          {renderSidebarNav(sidebarCollapsed)}
+        </aside>
 
-          {/* Mobile Drawer Overlay */}
-          {mobileDrawerOpen && (
-            <div className="fixed inset-0 z-50 flex md:hidden">
-              <div
-                className="fixed inset-0 bg-black/70"
-                onClick={() => setMobileDrawerOpen(false)}
-              />
-              <aside className="relative z-10 w-72 max-w-[85vw] overflow-y-auto border-r border-[#D1A953]/20 bg-[#081F2B]">
-                <div className="flex justify-end p-3 border-b border-[#D1A953]/15">
-                  <button
-                    type="button"
-                    aria-label="Close navigation drawer"
-                    onClick={() => setMobileDrawerOpen(false)}
-                    className="rounded-lg border border-[#D1A953]/25 p-2 text-[#F5F2EB]"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
-                </div>
-                {renderSidebarNav(false)}
-              </aside>
+        {/* Mobile Drawer Overlay */}
+        {mobileDrawerOpen && (
+          <div className="fixed inset-0 z-50 flex md:hidden">
+            <div
+              className="fixed inset-0 bg-black/70"
+              onClick={() => setMobileDrawerOpen(false)}
+            />
+            <aside className="relative z-10 w-72 max-w-[85vw] overflow-y-auto border-r border-[#D1A953]/20 bg-[#081F2B]">
+              <div className="flex justify-end p-3 border-b border-[#D1A953]/15">
+                <button
+                  type="button"
+                  aria-label="Close navigation drawer"
+                  onClick={() => setMobileDrawerOpen(false)}
+                  className="rounded-lg border border-[#D1A953]/25 p-2 text-[#F5F2EB]"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              {renderSidebarNav(false)}
+            </aside>
+          </div>
+        )}
+
+        {/* Main Workspace Area */}
+        <div className="flex min-w-0 flex-1 flex-col">
+          <header className="sticky top-0 z-30 flex flex-wrap items-center justify-between gap-3 border-b border-[#D1A953]/18 bg-[#061823]/95 px-4 py-3 sm:px-6 backdrop-blur-md">
+            <div className="flex items-center gap-3 min-w-0">
+              <button
+                type="button"
+                aria-label="Open admin navigation menu"
+                onClick={() => setMobileDrawerOpen(true)}
+                className="inline-flex md:hidden min-h-[40px] min-w-[40px] items-center justify-center rounded-lg border border-[#D1A953]/25 bg-[#0C2935] text-[#F5F2EB]"
+              >
+                <Menu className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+                onClick={() => setSidebarCollapsed((c) => !c)}
+                className="hidden md:inline-flex min-h-[38px] min-w-[38px] items-center justify-center rounded-lg border border-[#D1A953]/25 bg-[#0C2935] text-[#DFC585] hover:bg-[#123846]"
+              >
+                <Menu className="h-4 w-4" />
+              </button>
+              <div className="min-w-0">
+                <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-[#DFC585]">
+                  Admin Case Management
+                </p>
+                <h1
+                  id="admin-portal-title"
+                  className="font-editorial truncate text-lg sm:text-xl font-semibold text-[#F5F2EB]"
+                >
+                  {activeTitle}
+                </h1>
+              </div>
             </div>
-          )}
 
-          {/* Main Workspace Area */}
-          <div className="flex min-w-0 flex-1 flex-col">
-            <header className="sticky top-0 z-30 flex flex-wrap items-center justify-between gap-3 border-b border-[#D1A953]/18 bg-[#061823]/95 px-4 py-3 sm:px-6 backdrop-blur-md">
-              <div className="flex items-center gap-3 min-w-0">
+            <div className="flex items-center gap-2.5 shrink-0">
+              <span className="hidden sm:inline-block text-xs text-[#C2D0D6]">
+                {session.user.name} ·{' '}
+                <span className="font-mono text-[#DFC585]">
+                  {formatRoleLabel(session.user.role)}
+                </span>
+              </span>
+              <button
+                type="button"
+                onClick={() => loadFullWorkspace()}
+                aria-label="Refresh dashboard data"
+                className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border border-[#D1A953]/25 bg-[#0C2935] px-3 py-1.5 text-xs font-medium text-[#DFC585] hover:bg-[#123846]"
+              >
+                <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
+                <span className="hidden sm:inline">Refresh</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => onNavigatePath('/')}
+                className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border border-[#D1A953]/25 bg-[#0C2935] px-3 py-1.5 text-xs font-medium text-[#F5F2EB] hover:bg-[#123846]"
+              >
+                <span>Public Site</span>
+              </button>
+            </div>
+          </header>
+
+          <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-6">
+            {toast && (
+              <div
+                role={toast.kind === 'err' ? 'alert' : 'status'}
+                className={`flex items-center justify-between gap-3 rounded-xl border px-4 py-3 text-xs font-medium ${
+                  toast.kind === 'err'
+                    ? 'border-amber-400/40 bg-amber-500/12 text-amber-200'
+                    : 'border-[#D1A953]/40 bg-[#0C2935] text-[#DFC585]'
+                }`}
+              >
+                <span>{toast.text}</span>
                 <button
                   type="button"
-                  aria-label="Open admin navigation menu"
-                  onClick={() => setMobileDrawerOpen(true)}
-                  className="inline-flex md:hidden min-h-[40px] min-w-[40px] items-center justify-center rounded-lg border border-[#D1A953]/25 bg-[#0C2935] text-[#F5F2EB]"
+                  onClick={() => setToast(null)}
+                  aria-label="Dismiss notification"
+                  className="rounded p-1 hover:bg-[#061823]/40"
                 >
-                  <Menu className="h-4 w-4" />
+                  <X className="h-3.5 w-3.5" />
                 </button>
-                <button
-                  type="button"
-                  aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-                  onClick={() => setSidebarCollapsed((c) => !c)}
-                  className="hidden md:inline-flex min-h-[38px] min-w-[38px] items-center justify-center rounded-lg border border-[#D1A953]/25 bg-[#0C2935] text-[#DFC585] hover:bg-[#123846]"
-                >
-                  <Menu className="h-4 w-4" />
-                </button>
-                <div className="min-w-0">
-                  <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-[#DFC585]">
-                    Admin Case Management
-                  </p>
-                  <h2
-                    id="admin-portal-title"
-                    className="font-editorial truncate text-lg sm:text-xl font-semibold text-[#F5F2EB]"
-                  >
-                    {activeTitle}
+              </div>
+            )}
+
+            {isRestrictedRoute ? (
+              <div className="rounded-xl border border-amber-400/35 bg-[#0C2935] p-6 space-y-3">
+                <div className="flex items-center gap-2 text-amber-200">
+                  <ShieldAlert className="h-5 w-5" aria-hidden="true" />
+                  <h2 className="font-editorial text-lg font-semibold">
+                    Administrator Role Required
                   </h2>
                 </div>
-              </div>
-
-              <div className="flex items-center gap-2.5 shrink-0">
-                <span className="hidden sm:inline-block text-xs text-[#C2D0D6]">
-                  {session.user.name} ·{' '}
-                  <span className="font-mono text-[#DFC585]">{session.user.role}</span>
-                </span>
+                <p className="text-xs leading-relaxed text-[#C2D0D6]">
+                  Your current account role ({formatRoleLabel(session.user.role)}) does not permit
+                  access to organization-wide analytics, CSV exports, or immutable audit logs.
+                </p>
                 <button
                   type="button"
-                  onClick={() => loadFullWorkspace()}
-                  aria-label="Refresh dashboard data"
-                  className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border border-[#D1A953]/25 bg-[#0C2935] px-3 py-1.5 text-xs font-medium text-[#DFC585] hover:bg-[#123846]"
+                  onClick={() => onNavigatePath('/admin/dashboard')}
+                  className="min-h-[38px] rounded-lg bg-[#D1A953] px-4 py-1.5 text-xs font-semibold text-[#061823]"
                 >
-                  <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
-                  <span className="hidden sm:inline">Refresh</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={onClose}
-                  className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border border-[#D1A953]/25 bg-[#0C2935] px-3 py-1.5 text-xs font-medium text-[#F5F2EB] hover:bg-[#123846]"
-                >
-                  <span>Public Site</span>
+                  Return to Overview
                 </button>
               </div>
-            </header>
-
-            <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-6">
-              {toast && (
-                <div
-                  role={toast.kind === 'err' ? 'alert' : 'status'}
-                  className={`flex items-center justify-between gap-3 rounded-xl border px-4 py-3 text-xs font-medium ${
-                    toast.kind === 'err'
-                      ? 'border-amber-400/40 bg-amber-500/12 text-amber-200'
-                      : 'border-[#D1A953]/40 bg-[#0C2935] text-[#DFC585]'
-                  }`}
-                >
-                  <span>{toast.text}</span>
+            ) : routeCaseId ? (
+              caseDetailError ? (
+                <div className="rounded-xl border border-amber-400/35 bg-[#0C2935] p-6 space-y-3">
+                  <p className="text-sm font-medium text-amber-200">{caseDetailError}</p>
                   <button
                     type="button"
-                    onClick={() => setToast(null)}
-                    aria-label="Dismiss notification"
-                    className="rounded p-1 hover:bg-[#061823]/40"
+                    onClick={() => onNavigatePath('/admin/cases')}
+                    className="min-h-[38px] rounded-lg bg-[#D1A953] px-4 py-1.5 text-xs font-semibold text-[#061823]"
                   >
-                    <X className="h-3.5 w-3.5" />
+                    Return to Case List
                   </button>
                 </div>
-              )}
-
-              {selectedCaseId && caseDetail ? (
+              ) : caseDetail ? (
                 <AdminCaseDetailView
                   detail={caseDetail}
                   users={users}
-                  onBack={() => {
-                    setSelectedCaseId(null);
-                    setCaseDetail(null);
-                  }}
+                  onBack={() => onNavigatePath('/admin/cases')}
                   onUpdateCase={handleUpdateCase}
                   onAddNote={handleAddNote}
                 />
-              ) : activeNav === 'overview' ? (
-                <AdminOverviewView
-                  analytics={analytics}
-                  recentCases={caseList.items}
-                  datePreset={datePreset}
-                  customFrom={customFrom}
-                  customTo={customTo}
-                  comparePrevious={comparePrevious}
-                  onDatePresetChange={setDatePreset}
-                  onCustomFromChange={setCustomFrom}
-                  onCustomToChange={setCustomTo}
-                  onToggleCompare={setComparePrevious}
-                  onOpenCase={handleOpenCase}
-                  onNavigateStatus={(status) => {
-                    if (status === 'All') handleNavSelect('all-cases');
-                    else if (status === 'New') handleNavSelect('new-requests');
-                    else if (status === 'Pending') handleNavSelect('pending');
-                    else if (status === 'Follow Up') handleNavSelect('follow-up');
-                    else if (status === 'Completed') handleNavSelect('completed');
-                  }}
-                />
-              ) : isCaseListView ? (
-                <AdminCasesView
-                  data={caseList}
-                  users={users}
-                  filters={caseFilters}
-                  loading={casesLoading}
-                  onChangeFilters={(next) => setCaseFilters((prev) => ({ ...prev, ...next }))}
-                  onStatusChange={(id, status) => handleUpdateCase(id, { status })}
-                  onOpenCase={handleOpenCase}
-                />
-              ) : activeNav === 'service-analytics' ? (
-                <AdminAnalyticsView mode="domains" analytics={analytics} />
-              ) : activeNav === 'target-timelines' ? (
-                <AdminAnalyticsView mode="timelines" analytics={analytics} />
-              ) : activeNav === 'reports' ? (
-                <AdminReportsView
-                  analytics={analytics}
-                  userRole={session.user.role}
-                  authToken={session.token}
-                  onExportMessage={(msg) => showToast('ok', msg)}
-                />
-              ) : activeNav === 'notifications' ? (
-                <AdminNotificationsView
-                  notifications={notifications}
-                  onMarkRead={async (id) => {
-                    await apiFetch(`/api/admin/notifications/${id}/read`, {
-                      method: 'PATCH',
-                      headers: authHeaders(),
-                    });
-                    await loadNotifications();
-                  }}
-                  onMarkAllRead={async () => {
-                    await apiFetch('/api/admin/notifications/read-all', {
-                      method: 'POST',
-                      headers: authHeaders(),
-                    });
-                    await loadNotifications();
-                  }}
-                  onOpenCase={handleOpenCase}
-                />
-              ) : activeNav === 'activity' ? (
-                <AdminActivityView activity={activity} onOpenCase={handleOpenCase} />
               ) : (
-                <AdminSettingsView
-                  userRole={session.user.role}
-                  users={users}
-                  projects={projects}
-                  brand={brand}
-                  storageMode={authStatus.storageMode}
-                  mailerConfigured={authStatus.mailerConfigured}
-                  onCreateUser={handleCreateUser}
-                  onToggleUserActive={handleToggleUserActive}
-                  onAddProject={handleAddProject}
-                  onDeleteProject={handleDeleteProject}
-                  onUploadLogo={handleUploadLogo}
-                  onResetLogo={handleResetLogo}
-                />
-              )}
-            </main>
-          </div>
+                <div className="rounded-xl border border-[#D1A953]/20 bg-[#0C2935] p-8 text-center text-xs text-[#C2D0D6]">
+                  Loading consultation case…
+                </div>
+              )
+            ) : routeNav === 'overview' ? (
+              <AdminOverviewView
+                analytics={analytics}
+                recentCases={caseList.items}
+                datePreset={datePreset}
+                customFrom={customFrom}
+                customTo={customTo}
+                comparePrevious={comparePrevious}
+                onDatePresetChange={setDatePreset}
+                onCustomFromChange={setCustomFrom}
+                onCustomToChange={setCustomTo}
+                onToggleCompare={setComparePrevious}
+                onOpenCase={handleOpenCase}
+                onNavigateStatus={(status) => {
+                  if (status === 'All') handleNavSelect('all-cases');
+                  else if (status === 'New') handleNavSelect('new-requests');
+                  else if (status === 'Pending') handleNavSelect('pending');
+                  else if (status === 'Follow Up') handleNavSelect('follow-up');
+                  else if (status === 'Completed') handleNavSelect('completed');
+                }}
+              />
+            ) : isCaseListView ? (
+              <AdminCasesView
+                data={caseList}
+                users={users}
+                filters={caseFilters}
+                loading={casesLoading}
+                onChangeFilters={(next) => setCaseFilters((prev) => ({ ...prev, ...next }))}
+                onStatusChange={(id, status) => handleUpdateCase(id, { status })}
+                onOpenCase={handleOpenCase}
+              />
+            ) : routeNav === 'service-analytics' ? (
+              <AdminAnalyticsView mode="domains" analytics={analytics} />
+            ) : routeNav === 'target-timelines' ? (
+              <AdminAnalyticsView mode="timelines" analytics={analytics} />
+            ) : routeNav === 'reports' ? (
+              <AdminReportsView
+                analytics={analytics}
+                userRole={session.user.role}
+                authToken={session.token}
+                onExportMessage={(msg) => showToast('ok', msg)}
+              />
+            ) : routeNav === 'notifications' ? (
+              <AdminNotificationsView
+                notifications={notifications}
+                onMarkRead={async (id) => {
+                  await apiFetch(`/api/admin/notifications/${id}/read`, {
+                    method: 'PATCH',
+                    headers: authHeaders(),
+                  });
+                  await loadNotifications();
+                }}
+                onMarkAllRead={async () => {
+                  await apiFetch('/api/admin/notifications/read-all', {
+                    method: 'POST',
+                    headers: authHeaders(),
+                  });
+                  await loadNotifications();
+                }}
+                onOpenCase={handleOpenCase}
+              />
+            ) : routeNav === 'activity' ? (
+              <AdminActivityView
+                activity={activity}
+                auditEvents={auditEvents}
+                userRole={session.user.role}
+                onOpenCase={handleOpenCase}
+              />
+            ) : (
+              <AdminSettingsView
+                currentUserId={session.user.id}
+                userRole={session.user.role}
+                mfaEnabled={Boolean(session.user.mfaEnabled)}
+                users={users}
+                invitations={invitations}
+                sessions={sessions}
+                projects={projects}
+                brand={brand}
+                storageMode={authStatus.storageMode}
+                mailerConfigured={authStatus.mailerConfigured}
+                onChangePassword={handleChangePassword}
+                onSetupMfa={handleSetupMfa}
+                onEnableMfa={handleEnableMfa}
+                onDisableMfa={handleDisableMfa}
+                onCreateUser={handleCreateUser}
+                onUpdateUser={handleUpdateUser}
+                onCreateInvitation={handleCreateInvitation}
+                onRevokeSession={handleRevokeSession}
+                onAddProject={handleAddProject}
+                onDeleteProject={handleDeleteProject}
+                onUploadLogo={handleUploadLogo}
+                onResetLogo={handleResetLogo}
+              />
+            )}
+          </main>
         </div>
-      )}
+      </div>
     </div>
   );
 };

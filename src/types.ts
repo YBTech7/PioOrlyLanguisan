@@ -19,7 +19,7 @@ export type InquiryStatus = CaseStatus;
 
 export type CasePriority = 'Low' | 'Normal' | 'High' | 'Urgent';
 
-export type AdminRole = 'admin' | 'staff';
+export type AdminRole = 'super_admin' | 'admin' | 'staff';
 
 export interface ServiceOffering {
   id: ServiceDomainId;
@@ -81,8 +81,49 @@ export interface AdminUser {
   name: string;
   role: AdminRole;
   isActive: boolean;
+  authProviderId?: string | null;
   createdAt: string;
+  updatedAt?: string;
   lastLoginAt: string | null;
+  passwordUpdatedAt?: string | null;
+  mfaEnabled?: boolean;
+}
+
+export interface AdminInvitation {
+  id: string;
+  email: string;
+  name: string;
+  role: AdminRole;
+  invitedBy: string | null;
+  expiresAt: string;
+  acceptedAt: string | null;
+  createdAt: string;
+}
+
+export interface AdminSessionInfo {
+  id: string;
+  userId: string | null;
+  email: string;
+  name: string;
+  role: AdminRole;
+  ipAddress: string;
+  userAgent: string;
+  expiresAt: string;
+  revokedAt: string | null;
+  createdAt: string;
+  lastSeenAt: string;
+  isCurrent?: boolean;
+}
+
+export interface AuthAuditEvent {
+  id: string;
+  userId: string | null;
+  actorEmail: string;
+  eventType: string;
+  result: 'success' | 'failure' | 'blocked';
+  ipAddress: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
 }
 
 export interface CaseRecord {

@@ -306,7 +306,7 @@ test.describe('Pio Languisan Portfolio Platform E2E', () => {
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify({
-          hasAdminUsers: false,
+          hasAdminUsers: true,
           bootstrapConfigured: true,
           passcodeConfigured: true,
           storageMode: 'file',
@@ -323,14 +323,47 @@ test.describe('Pio Languisan Portfolio Platform E2E', () => {
       });
     });
 
-    await page.route('**/api/admin/login', async (route) => {
+    await page.route('**/api/auth/login', async (route) => {
+      const body = route.request().postDataJSON();
+      if (body?.password === 'wrong-password') {
+        await route.fulfill({
+          status: 401,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: 'Invalid email or password.' }),
+        });
+        return;
+      }
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify({
           token: 'e2e-admin-token',
           expiresInMs: 3600000,
-          user: { id: null, email: 'executive-admin', name: 'Executive Admin', role: 'admin' },
+          user: {
+            id: 'user-super-1',
+            email: body?.email || 'admin@piolanguisan.example',
+            name: 'Pio Languisan',
+            role: 'super_admin',
+            mfaEnabled: false,
+          },
+        }),
+      });
+    });
+
+    await page.route('**/api/auth/logout', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ ok: true }),
+      });
+    });
+
+    await page.route('**/api/auth/forgot-password', async (route) => {
+      await route.fulfill({
+        status: 503,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          error: 'Password recovery email delivery is not configured on this server.',
         }),
       });
     });
@@ -509,7 +542,7 @@ test.describe('Pio Languisan Portfolio Platform E2E', () => {
             id: 'note-1',
             caseId: 'INQ-2026-SENT01',
             authorId: null,
-            authorEmail: 'executive-admin',
+            authorEmail: 'admin@piolanguisan.example',
             content: 'Confirmed in inbox.',
             createdAt: '2026-11-18T11:00:00.000Z',
             updatedAt: '2026-11-18T11:00:00.000Z',
@@ -531,6 +564,30 @@ test.describe('Pio Languisan Portfolio Platform E2E', () => {
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify({ activity: [] }),
+      });
+    });
+
+    await page.route('**/api/admin/sessions*', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ sessions: [] }),
+      });
+    });
+
+    await page.route('**/api/admin/invitations*', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ invitations: [] }),
+      });
+    });
+
+    await page.route('**/api/admin/audit-events*', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ events: [] }),
       });
     });
 
@@ -636,55 +693,109 @@ test.describe('Pio Languisan Portfolio Platform E2E', () => {
     await page.keyboard.press('Escape');
     await expect(drawer).toHaveCount(0);
 
-    // Admin Dashboard does NOT disclose hardcoded passcode, displays live KPIs, case management, case details, and analytics
-    await page.getByRole('button', { name: 'Admin Console' }).click();
-    const adminDialog = page.getByRole('dialog');
-    await expect(adminDialog).toBeVisible();
-    const dialogText = await adminDialog.innerText();
-    expect(dialogText).not.toContain('PL-EXEC-2026');
+    // Clicking footer Admin Console navigates to dedicated /admin/login route without leaking secrets
+    await page.getByRole('link', { name: 'Admin Console' }).click();
+    await expect(page).toHaveURL(/\/admin\/login$/);
+    await expect(page.getByRole('heading', { name: 'Secure Dashboard Access' })).toBeVisible();
+    const loginBodyText = await page.locator('main').innerText();
+    expect(loginBodyText).not.toContain('PL-EXEC-2026');
 
-    await adminDialog.getByLabel('Executive passcode').fill('test-passcode');
-    await adminDialog.getByRole('button', { name: 'Unlock Console' }).click();
+    // Test password visibility toggle, Remember email, and Forgot password route
+    const passwordInput = page.locator('#admin-login-password');
+    await expect(passwordInput).toHaveAttribute('type', 'password');
+    await page.getByRole('button', { name: 'Show password' }).click();
+    await expect(passwordInput).toHaveAttribute('type', 'text');
+    await page.getByRole('button', { name: 'Hide password' }).click();
+    await expect(passwordInput).toHaveAttribute('type', 'password');
 
-    // Overview KPIs visible
-    await expect(adminDialog.getByText('Total Requests')).toBeVisible();
-    await expect(adminDialog.getByText('Completion Rate')).toBeVisible();
+    // Navigate to Forgot Password & observe honest 503 when mailer is unconfigured
+    await page.getByRole('link', { name: 'Forgot password?' }).click();
+    await expect(page).toHaveURL(/\/admin\/forgot-password$/);
+    await page.locator('#recovery-email').fill('admin@piolanguisan.example');
+    await page.getByRole('button', { name: 'Send Recovery Link' }).click();
+    await expect(page.getByRole('alert')).toContainText('not configured');
+    await page.getByRole('button', { name: 'Back to Admin Sign In' }).click();
+    await expect(page).toHaveURL(/\/admin\/login$/);
+
+    // Unauthenticated protected route attempt (?p=/admin/cases) redirects cleanly to /admin/login?redirect=...
+    await page.goto('./?p=%2Fadmin%2Fcases', { waitUntil: 'networkidle' });
+    await expect(page).toHaveURL(/\/admin\/login\?redirect=%2Fadmin%2Fcases$/);
+
+    // Invalid credentials show safe error without disclosing existence
+    await page.locator('#admin-login-email').fill('admin@piolanguisan.example');
+    await page.locator('#admin-login-password').fill('wrong-password');
+    await page.getByRole('button', { name: 'Secure Sign In' }).click();
+    await expect(page.getByRole('alert')).toContainText('Invalid email or password.');
+
+    // Check Remember email & sign in cleanly -> redirects back to /admin/cases (requested protected route)
+    await page.getByLabel('Remember email').check();
+    await page.locator('#admin-login-password').fill('SuperValidPassword!2026');
+    await page.getByRole('button', { name: 'Secure Sign In' }).click();
+    await expect(page).toHaveURL(/\/admin\/cases$/);
+
+    // Confirm localStorage remembered email ONLY (never password or token)
+    const storageDump = await page.evaluate(() => ({ ...window.localStorage }));
+    expect(storageDump.pl_admin_remembered_email).toBe('admin@piolanguisan.example');
+    expect(JSON.stringify(storageDump)).not.toContain('SuperValidPassword!2026');
+    expect(JSON.stringify(storageDump)).not.toContain('e2e-admin-token');
+
+    // Navigate to Overview KPIs
+    await page.getByRole('button', { name: 'Overview' }).click();
+    await expect(page).toHaveURL(/\/admin\/dashboard$/);
+    await expect(page.getByText('Total Requests')).toBeVisible();
+    await expect(page.getByText('Completion Rate')).toBeVisible();
 
     // Navigate to All Cases and change status
-    await adminDialog.getByRole('button', { name: /All Cases/ }).click();
-    await adminDialog
+    await page.getByRole('button', { name: /All Cases/ }).click();
+    await expect(page).toHaveURL(/\/admin\/cases$/);
+    await page
       .getByLabel('Status for Jordan Taylor', { exact: true })
       .selectOption('Pending');
-    await expect(adminDialog.getByText('Updated CASE-000001 status to Pending.')).toBeVisible();
+    await expect(page.getByText('Updated CASE-000001 status to Pending.')).toBeVisible();
 
     // Open Case Detail page -> tel: link, Gmail status, and add internal note
-    await adminDialog.getByRole('button', { name: 'CASE-000001' }).first().click();
-    const telLink = adminDialog.getByRole('link', { name: '+639171234567' });
+    await page.getByRole('button', { name: 'CASE-000001' }).first().click();
+    await expect(page).toHaveURL(/\/admin\/cases\/INQ-2026-SENT01$/);
+    const telLink = page.getByRole('link', { name: '+639171234567' });
     await expect(telLink).toBeVisible();
     await expect(telLink).toHaveAttribute('href', 'tel:+639171234567');
-    await expect(adminDialog.getByText('Accepted by Gmail', { exact: true })).toBeVisible();
-    await expect(adminDialog.getByText('Gmail ID: 193a8f10ab')).toBeVisible();
-    await adminDialog.locator('#case-internal-note').fill('Confirmed in inbox.');
-    await adminDialog.getByRole('button', { name: 'Add Internal Note' }).click();
-    await expect(adminDialog.getByText('Internal note recorded.')).toBeVisible();
+    await expect(page.getByText('Accepted by Gmail', { exact: true })).toBeVisible();
+    await expect(page.getByText('Gmail ID: 193a8f10ab')).toBeVisible();
+    await page.locator('#case-internal-note').fill('Confirmed in inbox.');
+    await page.getByRole('button', { name: 'Add Internal Note' }).click();
+    await expect(page.getByText('Internal note recorded.')).toBeVisible();
 
     // Navigate to Service Domain Analytics and Target Timelines
-    await adminDialog.getByRole('button', { name: 'Service Domain Analytics' }).click();
-    await expect(adminDialog.getByText('Service Domain × Status Matrix')).toBeVisible();
-    await adminDialog.getByRole('button', { name: 'Target Timelines' }).click();
-    await expect(adminDialog.getByText('Target Timeline × Status Matrix')).toBeVisible();
+    await page.getByRole('button', { name: 'Service Domain Analytics' }).click();
+    await expect(page).toHaveURL(/\/admin\/analytics$/);
+    await expect(page.getByText('Service Domain × Status Matrix')).toBeVisible();
+    await page.getByRole('button', { name: 'Target Timelines' }).click();
+    await expect(page).toHaveURL(/\/admin\/analytics\?tab=timelines$/);
+    await expect(page.getByText('Target Timeline × Status Matrix')).toBeVisible();
 
     // Verify Admin Dashboard mobile responsive drawer & zero horizontal overflow at 390x844
     await page.setViewportSize({ width: 390, height: 844 });
-    const adminOverflow = await adminDialog.evaluate(
-      (el) => el.scrollWidth - el.clientWidth
+    const adminOverflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth
     );
     expect(adminOverflow).toBeLessThanOrEqual(1);
-    await adminDialog.getByRole('button', { name: 'Open admin navigation menu' }).click();
-    await adminDialog.getByRole('button', { name: 'Overview' }).last().click();
-    await expect(adminDialog.getByText('Total Requests')).toBeVisible();
+    await page.getByRole('button', { name: 'Open admin navigation menu' }).click();
+    await page.getByRole('button', { name: 'Overview' }).last().click();
+    await expect(page.getByText('Total Requests')).toBeVisible();
 
-    await page.keyboard.press('Escape');
+    // Logout clears state and redirects to /admin/login; browser Back never exposes protected dashboard
+    await page.getByRole('button', { name: 'Open admin navigation menu' }).click();
+    await page.getByRole('button', { name: 'Logout' }).last().click();
+    await expect(page).toHaveURL(/\/admin\/login$/);
+    await expect(page.locator('#admin-login-email')).toHaveValue('admin@piolanguisan.example');
+    const loginMobileOverflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth
+    );
+    expect(loginMobileOverflow).toBeLessThanOrEqual(1);
+
+    await page.goBack();
+    await expect(page).toHaveURL(/\/admin\/login/);
+    await expect(page.getByText('Total Requests')).toHaveCount(0);
   });
 
   for (const vp of VIEWPORTS) {

@@ -3,12 +3,14 @@ const RAW_API_BASE = (import.meta.env.VITE_API_BASE_URL || '').trim().replace(/\
 export class ApiError extends Error {
   status: number;
   isStaticFallback: boolean;
+  code?: string;
 
-  constructor(message: string, status = 500, isStaticFallback = false) {
+  constructor(message: string, status = 500, isStaticFallback = false, code?: string) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
     this.isStaticFallback = isStaticFallback;
+    this.code = code;
   }
 }
 
@@ -93,11 +95,13 @@ export async function apiFetch<T>(
       throw new ApiError('The backend returned an invalid response.', response.ok ? 502 : response.status);
     }
     if (!response.ok) {
+      const obj = payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : null;
       const message =
-        payload && typeof payload === 'object' && 'error' in payload && typeof payload.error === 'string'
-          ? payload.error
+        obj && typeof obj.error === 'string'
+          ? obj.error
           : `Request failed with status ${response.status}.`;
-      throw new ApiError(message, response.status);
+      const code = obj && typeof obj.code === 'string' ? obj.code : undefined;
+      throw new ApiError(message, response.status, false, code);
     }
 
     return payload as T;

@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Pio Languisan — Redirecting</title>
+    <script>
+      (function () {
+        var repoBase = '/PioOrlyLanguisan';
+        var path = window.location.pathname || '/';
+        var search = window.location.search || '';
+        var hash = window.location.hash || '';
+        var isRepoScoped =
+          path === repoBase ||
+          path === repoBase + '/' ||
+          path.indexOf(repoBase + '/') === 0;
+        var base = isRepoScoped ? repoBase + '/' : '/';
+        var subPath = isRepoScoped
+          ? path.slice(repoBase.length) || '/'
+          : path || '/';
+        var target =
+          base +
+          '?p=' +
+          encodeURIComponent(subPath + search) +
+          hash;
+        window.location.replace(target);
+      })();
+    </script>
+  </head>
+  <body style="background:#061823;color:#F5F2EB;font-family:sans-serif;padding:2rem;">
+    <p>Redirecting to requested route…</p>
+  </body>
+</html>

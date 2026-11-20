@@ -9,9 +9,12 @@ import {
   WORKFLOW_VISUAL_URL,
 } from '../src/data/profileData.ts';
 import type {
+  AdminInvitation,
   AdminNotification,
   AdminRole,
+  AdminSessionInfo,
   AdminUser,
+  AuthAuditEvent,
   BrandSettings,
   CaseActivityEntry,
   CaseDetailPayload,
@@ -32,6 +35,27 @@ import type {
 
 export interface StoredUser extends AdminUser {
   passwordHash: string;
+  sessionVersion?: number;
+  mfaSecret?: string | null;
+}
+
+interface StoredSession extends AdminSessionInfo {
+  tokenHash: string;
+  csrfToken: string;
+  sessionVersion: number;
+}
+
+interface StoredRecoveryToken {
+  id: string;
+  userId: string;
+  tokenHash: string;
+  expiresAt: string;
+  usedAt: string | null;
+  createdAt: string;
+}
+
+interface StoredInvitation extends AdminInvitation {
+  tokenHash: string;
 }
 
 interface IdempotencyEntry {
@@ -44,6 +68,10 @@ interface IdempotencyEntry {
 export interface PersistentCaseStore {
   caseSequence: number;
   users: StoredUser[];
+  sessions: StoredSession[];
+  recoveryTokens: StoredRecoveryToken[];
+  invitations: StoredInvitation[];
+  authAuditEvents: AuthAuditEvent[];
   cases: CaseRecord[];
   caseStatusHistory: CaseStatusHistoryEntry[];
   caseNotes: CaseNote[];
@@ -206,6 +234,10 @@ function createInitialStore(): PersistentCaseStore {
   return {
     caseSequence: isProd ? 0 : 1,
     users: [],
+    sessions: [],
+    recoveryTokens: [],
+    invitations: [],
+    authAuditEvents: [],
     cases: isProd ? [] : [sampleCase],
     caseStatusHistory: isProd
       ? []
@@ -365,6 +397,10 @@ function ensureFileStore(): PersistentCaseStore {
     const hydrated: PersistentCaseStore = {
       caseSequence: seqCounter,
       users: Array.isArray(parsed.users) ? parsed.users : [],
+      sessions: Array.isArray(parsed.sessions) ? parsed.sessions : [],
+      recoveryTokens: Array.isArray(parsed.recoveryTokens) ? parsed.recoveryTokens : [],
+      invitations: Array.isArray(parsed.invitations) ? parsed.invitations : [],
+      authAuditEvents: Array.isArray(parsed.authAuditEvents) ? parsed.authAuditEvents : [],
       cases: hydratedCases,
       caseStatusHistory: Array.isArray(parsed.caseStatusHistory) ? parsed.caseStatusHistory : [],
       caseNotes: Array.isArray(parsed.caseNotes) ? parsed.caseNotes : [],
@@ -414,9 +450,17 @@ function sanitizePublicUser(u: StoredUser): AdminUser {
     name: u.name,
     role: u.role,
     isActive: u.isActive,
+    authProviderId: u.authProviderId ?? null,
     createdAt: u.createdAt,
+    updatedAt: u.updatedAt ?? u.createdAt,
     lastLoginAt: u.lastLoginAt,
+    passwordUpdatedAt: u.passwordUpdatedAt ?? null,
+    mfaEnabled: Boolean(u.mfaEnabled),
   };
+}
+
+export function hashSecretToken(rawToken: string): string {
+  return crypto.createHash('sha256').update(rawToken).digest('hex');
 }
 
 function applyCaseFilters(cases: readonly CaseRecord[], filters: CaseQueryFilters): CaseRecord[] {
@@ -506,9 +550,12 @@ function createPostgresAdapter(dbUrl: string) {
   const ensureReady = (): Promise<void> => {
     if (readyPromise) return readyPromise;
     readyPromise = (async () => {
-      const migrationPath = path.resolve(process.cwd(), 'db/migrations/001_case_management.sql');
-      const ddl = fs.readFileSync(migrationPath, 'utf-8');
-      await sql.unsafe(ddl);
+      const m1 = path.resolve(process.cwd(), 'db/migrations/001_case_management.sql');
+      await sql.unsafe(fs.readFileSync(m1, 'utf-8'));
+      const m2 = path.resolve(process.cwd(), 'db/migrations/002_admin_auth_security.sql');
+      if (fs.existsSync(m2)) {
+        await sql.unsafe(fs.readFileSync(m2, 'utf-8'));
+      }
     })().catch((err) => {
       readyPromise = null;
       throw err;
@@ -554,7 +601,8 @@ function createPostgresAdapter(dbUrl: string) {
     async hasAnyAdminUser(): Promise<boolean> {
       await ensureReady();
       const [row] = await sql<{ count: string }[]>`
-        SELECT COUNT(*)::text AS count FROM users WHERE role = 'admin' AND is_active = true
+        SELECT COUNT(*)::text AS count FROM users
+        WHERE role IN ('super_admin', 'admin') AND is_active = true
       `;
       return Number(row?.count || 0) > 0;
     },
@@ -562,7 +610,7 @@ function createPostgresAdapter(dbUrl: string) {
     async listUsers(): Promise<AdminUser[]> {
       await ensureReady();
       const rows = await sql<Record<string, unknown>[]>`
-        SELECT id, email, name, role, is_active, created_at, last_login_at
+        SELECT id, email, name, role, is_active, auth_provider_id, created_at, updated_at, last_login_at, password_updated_at, mfa_enabled
         FROM users ORDER BY created_at ASC
       `;
       return rows.map((r) => ({
@@ -571,8 +619,12 @@ function createPostgresAdapter(dbUrl: string) {
         name: String(r.name),
         role: r.role as AdminRole,
         isActive: Boolean(r.is_active),
+        authProviderId: r.auth_provider_id ? String(r.auth_provider_id) : null,
         createdAt: new Date(String(r.created_at)).toISOString(),
+        updatedAt: r.updated_at ? new Date(String(r.updated_at)).toISOString() : undefined,
         lastLoginAt: r.last_login_at ? new Date(String(r.last_login_at)).toISOString() : null,
+        passwordUpdatedAt: r.password_updated_at ? new Date(String(r.password_updated_at)).toISOString() : null,
+        mfaEnabled: Boolean(r.mfa_enabled),
       }));
     },
 
@@ -589,26 +641,38 @@ function createPostgresAdapter(dbUrl: string) {
         passwordHash: String(r.password_hash),
         role: r.role as AdminRole,
         isActive: Boolean(r.is_active),
+        authProviderId: r.auth_provider_id ? String(r.auth_provider_id) : null,
         createdAt: new Date(String(r.created_at)).toISOString(),
+        updatedAt: r.updated_at ? new Date(String(r.updated_at)).toISOString() : undefined,
         lastLoginAt: r.last_login_at ? new Date(String(r.last_login_at)).toISOString() : null,
+        passwordUpdatedAt: r.password_updated_at ? new Date(String(r.password_updated_at)).toISOString() : null,
+        sessionVersion: Number(r.session_version ?? 1),
+        mfaEnabled: Boolean(r.mfa_enabled),
+        mfaSecret: r.mfa_secret ? String(r.mfa_secret) : null,
       };
     },
 
-    async getUserById(id: string): Promise<AdminUser | null> {
+    async getUserById(id: string): Promise<StoredUser | null> {
       await ensureReady();
       const [r] = await sql<Record<string, unknown>[]>`
-        SELECT id, email, name, role, is_active, created_at, last_login_at
-        FROM users WHERE id = ${id} LIMIT 1
+        SELECT * FROM users WHERE id = ${id} LIMIT 1
       `;
       if (!r) return null;
       return {
         id: String(r.id),
         email: String(r.email),
         name: String(r.name),
+        passwordHash: String(r.password_hash),
         role: r.role as AdminRole,
         isActive: Boolean(r.is_active),
+        authProviderId: r.auth_provider_id ? String(r.auth_provider_id) : null,
         createdAt: new Date(String(r.created_at)).toISOString(),
+        updatedAt: r.updated_at ? new Date(String(r.updated_at)).toISOString() : undefined,
         lastLoginAt: r.last_login_at ? new Date(String(r.last_login_at)).toISOString() : null,
+        passwordUpdatedAt: r.password_updated_at ? new Date(String(r.password_updated_at)).toISOString() : null,
+        sessionVersion: Number(r.session_version ?? 1),
+        mfaEnabled: Boolean(r.mfa_enabled),
+        mfaSecret: r.mfa_secret ? String(r.mfa_secret) : null,
       };
     },
 
@@ -622,9 +686,9 @@ function createPostgresAdapter(dbUrl: string) {
       const id = `usr-${crypto.randomUUID().slice(0, 12)}`;
       const passwordHash = hashPassword(input.password);
       const [r] = await sql<Record<string, unknown>[]>`
-        INSERT INTO users (id, email, name, password_hash, role, is_active)
-        VALUES (${id}, ${input.email.toLowerCase()}, ${input.name}, ${passwordHash}, ${input.role}, true)
-        RETURNING id, email, name, role, is_active, created_at, last_login_at
+        INSERT INTO users (id, email, name, password_hash, role, is_active, password_updated_at)
+        VALUES (${id}, ${input.email.toLowerCase()}, ${input.name}, ${passwordHash}, ${input.role}, true, now())
+        RETURNING id, email, name, role, is_active, auth_provider_id, created_at, updated_at, last_login_at, password_updated_at, mfa_enabled
       `;
       return {
         id: String(r.id),
@@ -632,8 +696,12 @@ function createPostgresAdapter(dbUrl: string) {
         name: String(r.name),
         role: r.role as AdminRole,
         isActive: Boolean(r.is_active),
+        authProviderId: r.auth_provider_id ? String(r.auth_provider_id) : null,
         createdAt: new Date(String(r.created_at)).toISOString(),
+        updatedAt: r.updated_at ? new Date(String(r.updated_at)).toISOString() : undefined,
         lastLoginAt: null,
+        passwordUpdatedAt: r.password_updated_at ? new Date(String(r.password_updated_at)).toISOString() : null,
+        mfaEnabled: Boolean(r.mfa_enabled),
       };
     },
 
@@ -644,29 +712,351 @@ function createPostgresAdapter(dbUrl: string) {
       await ensureReady();
       const existing = await this.getUserById(id);
       if (!existing) return null;
+      const bumpSessionVersion = changes.isActive === false || (changes.role !== undefined && changes.role !== existing.role);
       const [r] = await sql<Record<string, unknown>[]>`
         UPDATE users
         SET role = ${changes.role ?? existing.role},
             is_active = ${changes.isActive ?? existing.isActive},
-            name = ${changes.name ?? existing.name}
+            name = ${changes.name ?? existing.name},
+            updated_at = now(),
+            session_version = session_version + ${bumpSessionVersion ? 1 : 0}
         WHERE id = ${id}
-        RETURNING id, email, name, role, is_active, created_at, last_login_at
+        RETURNING id, email, name, role, is_active, auth_provider_id, created_at, updated_at, last_login_at, password_updated_at, mfa_enabled
       `;
       if (!r) return null;
+      if (bumpSessionVersion) {
+        await sql`UPDATE admin_sessions SET revoked_at = COALESCE(revoked_at, now()) WHERE user_id = ${id}`;
+      }
       return {
         id: String(r.id),
         email: String(r.email),
         name: String(r.name),
         role: r.role as AdminRole,
         isActive: Boolean(r.is_active),
+        authProviderId: r.auth_provider_id ? String(r.auth_provider_id) : null,
         createdAt: new Date(String(r.created_at)).toISOString(),
+        updatedAt: r.updated_at ? new Date(String(r.updated_at)).toISOString() : undefined,
         lastLoginAt: r.last_login_at ? new Date(String(r.last_login_at)).toISOString() : null,
+        passwordUpdatedAt: r.password_updated_at ? new Date(String(r.password_updated_at)).toISOString() : null,
+        mfaEnabled: Boolean(r.mfa_enabled),
       };
+    },
+
+    async updateUserPassword(userId: string, newPassword: string, keepSessionId?: string): Promise<boolean> {
+      await ensureReady();
+      const passwordHash = hashPassword(newPassword);
+      const rows = await sql`
+        UPDATE users
+        SET password_hash = ${passwordHash},
+            password_updated_at = now(),
+            updated_at = now(),
+            session_version = session_version + 1
+        WHERE id = ${userId}
+        RETURNING id
+      `;
+      if (rows.length === 0) return false;
+      if (keepSessionId) {
+        await sql`
+          UPDATE admin_sessions SET revoked_at = COALESCE(revoked_at, now())
+          WHERE user_id = ${userId} AND id <> ${keepSessionId}
+        `;
+      } else {
+        await sql`
+          UPDATE admin_sessions SET revoked_at = COALESCE(revoked_at, now())
+          WHERE user_id = ${userId}
+        `;
+      }
+      return true;
+    },
+
+    async updateUserMfa(userId: string, mfa: { enabled: boolean; secret: string | null }): Promise<boolean> {
+      await ensureReady();
+      const rows = await sql`
+        UPDATE users
+        SET mfa_enabled = ${mfa.enabled},
+            mfa_secret = ${mfa.secret},
+            updated_at = now()
+        WHERE id = ${userId}
+        RETURNING id
+      `;
+      return rows.length > 0;
     },
 
     async recordUserLogin(id: string): Promise<void> {
       await ensureReady();
-      await sql`UPDATE users SET last_login_at = now() WHERE id = ${id}`;
+      await sql`UPDATE users SET last_login_at = now(), updated_at = now() WHERE id = ${id}`;
+    },
+
+    async createSessionRecord(input: {
+      id: string;
+      userId: string | null;
+      tokenHash: string;
+      csrfToken: string;
+      role: AdminRole;
+      email: string;
+      name: string;
+      userAgent: string;
+      ipAddress: string;
+      sessionVersion: number;
+      expiresAt: string;
+    }): Promise<void> {
+      await ensureReady();
+      await sql`
+        INSERT INTO admin_sessions (
+          id, user_id, token_hash, csrf_token, role, email, name,
+          user_agent, ip_address, session_version, expires_at
+        ) VALUES (
+          ${input.id}, ${input.userId}, ${input.tokenHash}, ${input.csrfToken},
+          ${input.role}, ${input.email}, ${input.name}, ${input.userAgent},
+          ${input.ipAddress}, ${input.sessionVersion}, ${input.expiresAt}
+        )
+      `;
+    },
+
+    async getSessionByTokenHash(tokenHash: string): Promise<StoredSession | null> {
+      await ensureReady();
+      const [r] = await sql<Record<string, unknown>[]>`
+        SELECT * FROM admin_sessions WHERE token_hash = ${tokenHash} LIMIT 1
+      `;
+      if (!r) return null;
+      return {
+        id: String(r.id),
+        userId: r.user_id ? String(r.user_id) : null,
+        tokenHash: String(r.token_hash),
+        csrfToken: String(r.csrf_token),
+        role: r.role as AdminRole,
+        email: String(r.email),
+        name: String(r.name),
+        userAgent: String(r.user_agent || ''),
+        ipAddress: String(r.ip_address || ''),
+        sessionVersion: Number(r.session_version ?? 1),
+        expiresAt: new Date(String(r.expires_at)).toISOString(),
+        revokedAt: r.revoked_at ? new Date(String(r.revoked_at)).toISOString() : null,
+        createdAt: new Date(String(r.created_at)).toISOString(),
+        lastSeenAt: new Date(String(r.last_seen_at)).toISOString(),
+      };
+    },
+
+    async listSessions(userId?: string): Promise<AdminSessionInfo[]> {
+      await ensureReady();
+      const rows = userId
+        ? await sql<Record<string, unknown>[]>`
+            SELECT * FROM admin_sessions WHERE user_id = ${userId} AND revoked_at IS NULL AND expires_at > now()
+            ORDER BY last_seen_at DESC LIMIT 100
+          `
+        : await sql<Record<string, unknown>[]>`
+            SELECT * FROM admin_sessions WHERE revoked_at IS NULL AND expires_at > now()
+            ORDER BY last_seen_at DESC LIMIT 100
+          `;
+      return rows.map((r) => ({
+        id: String(r.id),
+        userId: r.user_id ? String(r.user_id) : null,
+        email: String(r.email),
+        name: String(r.name),
+        role: r.role as AdminRole,
+        ipAddress: String(r.ip_address || ''),
+        userAgent: String(r.user_agent || ''),
+        expiresAt: new Date(String(r.expires_at)).toISOString(),
+        revokedAt: r.revoked_at ? new Date(String(r.revoked_at)).toISOString() : null,
+        createdAt: new Date(String(r.created_at)).toISOString(),
+        lastSeenAt: new Date(String(r.last_seen_at)).toISOString(),
+      }));
+    },
+
+    async revokeSessionById(sessionId: string, userId?: string): Promise<boolean> {
+      await ensureReady();
+      const rows = userId
+        ? await sql`
+            UPDATE admin_sessions SET revoked_at = COALESCE(revoked_at, now())
+            WHERE id = ${sessionId} AND user_id = ${userId} RETURNING id
+          `
+        : await sql`
+            UPDATE admin_sessions SET revoked_at = COALESCE(revoked_at, now())
+            WHERE id = ${sessionId} RETURNING id
+          `;
+      return rows.length > 0;
+    },
+
+    async revokeSessionByTokenHash(tokenHash: string): Promise<void> {
+      await ensureReady();
+      await sql`
+        UPDATE admin_sessions SET revoked_at = COALESCE(revoked_at, now())
+        WHERE token_hash = ${tokenHash}
+      `;
+    },
+
+    async revokeAllUserSessions(userId: string): Promise<void> {
+      await ensureReady();
+      await sql`
+        UPDATE admin_sessions SET revoked_at = COALESCE(revoked_at, now())
+        WHERE user_id = ${userId}
+      `;
+    },
+
+    async createPasswordRecoveryToken(userId: string, ttlMs: number): Promise<string> {
+      await ensureReady();
+      const rawToken = crypto.randomBytes(32).toString('base64url');
+      const tokenHash = hashSecretToken(rawToken);
+      const id = `rec-${crypto.randomUUID().slice(0, 12)}`;
+      const expiresAt = new Date(Date.now() + ttlMs).toISOString();
+      await sql`
+        INSERT INTO password_recovery_tokens (id, user_id, token_hash, expires_at)
+        VALUES (${id}, ${userId}, ${tokenHash}, ${expiresAt})
+      `;
+      return rawToken;
+    },
+
+    async consumePasswordRecoveryToken(rawToken: string, newPassword: string): Promise<{ userId: string; email: string } | null> {
+      await ensureReady();
+      const tokenHash = hashSecretToken(rawToken);
+      return sql.begin(async (tx) => {
+        const [tok] = await tx<Record<string, unknown>[]>`
+          SELECT prt.id, prt.user_id, prt.expires_at, prt.used_at, u.email, u.is_active
+          FROM password_recovery_tokens prt
+          JOIN users u ON u.id = prt.user_id
+          WHERE prt.token_hash = ${tokenHash}
+          FOR UPDATE
+        `;
+        if (!tok || tok.used_at || !tok.is_active || new Date(String(tok.expires_at)).getTime() < Date.now()) {
+          return null;
+        }
+        await tx`UPDATE password_recovery_tokens SET used_at = now() WHERE id = ${String(tok.id)}`;
+        const passwordHash = hashPassword(newPassword);
+        await tx`
+          UPDATE users
+          SET password_hash = ${passwordHash},
+              password_updated_at = now(),
+              updated_at = now(),
+              session_version = session_version + 1
+          WHERE id = ${String(tok.user_id)}
+        `;
+        await tx`
+          UPDATE admin_sessions SET revoked_at = COALESCE(revoked_at, now())
+          WHERE user_id = ${String(tok.user_id)}
+        `;
+        return { userId: String(tok.user_id), email: String(tok.email) };
+      });
+    },
+
+    async createInvitation(input: {
+      email: string;
+      name: string;
+      role: AdminRole;
+      invitedBy: string | null;
+      ttlMs: number;
+    }): Promise<{ invitation: AdminInvitation; rawToken: string }> {
+      await ensureReady();
+      const rawToken = crypto.randomBytes(32).toString('base64url');
+      const tokenHash = hashSecretToken(rawToken);
+      const id = `inv-${crypto.randomUUID().slice(0, 12)}`;
+      const expiresAt = new Date(Date.now() + input.ttlMs).toISOString();
+      const [r] = await sql<Record<string, unknown>[]>`
+        INSERT INTO admin_invitations (id, email, name, role, token_hash, invited_by, expires_at)
+        VALUES (${id}, ${input.email.toLowerCase()}, ${input.name}, ${input.role}, ${tokenHash}, ${input.invitedBy}, ${expiresAt})
+        RETURNING *
+      `;
+      return {
+        rawToken,
+        invitation: {
+          id: String(r.id),
+          email: String(r.email),
+          name: String(r.name),
+          role: r.role as AdminRole,
+          invitedBy: r.invited_by ? String(r.invited_by) : null,
+          expiresAt: new Date(String(r.expires_at)).toISOString(),
+          acceptedAt: null,
+          createdAt: new Date(String(r.created_at)).toISOString(),
+        },
+      };
+    },
+
+    async listInvitations(): Promise<AdminInvitation[]> {
+      await ensureReady();
+      const rows = await sql<Record<string, unknown>[]>`
+        SELECT * FROM admin_invitations ORDER BY created_at DESC LIMIT 50
+      `;
+      return rows.map((r) => ({
+        id: String(r.id),
+        email: String(r.email),
+        name: String(r.name),
+        role: r.role as AdminRole,
+        invitedBy: r.invited_by ? String(r.invited_by) : null,
+        expiresAt: new Date(String(r.expires_at)).toISOString(),
+        acceptedAt: r.accepted_at ? new Date(String(r.accepted_at)).toISOString() : null,
+        createdAt: new Date(String(r.created_at)).toISOString(),
+      }));
+    },
+
+    async acceptInvitation(rawToken: string, password: string): Promise<AdminUser | null> {
+      await ensureReady();
+      const tokenHash = hashSecretToken(rawToken);
+      return sql.begin(async (tx) => {
+        const [inv] = await tx<Record<string, unknown>[]>`
+          SELECT * FROM admin_invitations WHERE token_hash = ${tokenHash} FOR UPDATE
+        `;
+        if (!inv || inv.accepted_at || new Date(String(inv.expires_at)).getTime() < Date.now()) {
+          return null;
+        }
+        const [existingUser] = await tx<{ id: string }[]>`
+          SELECT id FROM users WHERE lower(email) = lower(${String(inv.email)}) LIMIT 1
+        `;
+        if (existingUser) return null;
+
+        const userId = `usr-${crypto.randomUUID().slice(0, 12)}`;
+        const passwordHash = hashPassword(password);
+        const [u] = await tx<Record<string, unknown>[]>`
+          INSERT INTO users (id, email, name, password_hash, role, is_active, password_updated_at)
+          VALUES (${userId}, ${String(inv.email).toLowerCase()}, ${String(inv.name)}, ${passwordHash}, ${String(inv.role)}, true, now())
+          RETURNING id, email, name, role, is_active, auth_provider_id, created_at, updated_at, last_login_at, password_updated_at, mfa_enabled
+        `;
+        await tx`UPDATE admin_invitations SET accepted_at = now() WHERE id = ${String(inv.id)}`;
+        return {
+          id: String(u.id),
+          email: String(u.email),
+          name: String(u.name),
+          role: u.role as AdminRole,
+          isActive: Boolean(u.is_active),
+          authProviderId: u.auth_provider_id ? String(u.auth_provider_id) : null,
+          createdAt: new Date(String(u.created_at)).toISOString(),
+          updatedAt: u.updated_at ? new Date(String(u.updated_at)).toISOString() : undefined,
+          lastLoginAt: null,
+          passwordUpdatedAt: u.password_updated_at ? new Date(String(u.password_updated_at)).toISOString() : null,
+          mfaEnabled: Boolean(u.mfa_enabled),
+        };
+      });
+    },
+
+    async recordAuthAuditEvent(input: {
+      userId: string | null;
+      actorEmail: string;
+      eventType: string;
+      result: 'success' | 'failure' | 'blocked';
+      ipAddress: string;
+      metadata?: Record<string, unknown>;
+    }): Promise<void> {
+      await ensureReady();
+      const id = `auth-${crypto.randomUUID().slice(0, 12)}`;
+      await sql`
+        INSERT INTO auth_audit_events (id, user_id, actor_email, event_type, result, ip_address, metadata)
+        VALUES (${id}, ${input.userId}, ${input.actorEmail}, ${input.eventType}, ${input.result}, ${input.ipAddress}, ${sql.json((input.metadata || {}) as postgres.JSONValue)})
+      `;
+    },
+
+    async listAuthAuditEvents(limit = 100): Promise<AuthAuditEvent[]> {
+      await ensureReady();
+      const rows = await sql<Record<string, unknown>[]>`
+        SELECT * FROM auth_audit_events ORDER BY created_at DESC LIMIT ${Math.min(300, Math.max(1, limit))}
+      `;
+      return rows.map((r) => ({
+        id: String(r.id),
+        userId: r.user_id ? String(r.user_id) : null,
+        actorEmail: String(r.actor_email || ''),
+        eventType: String(r.event_type),
+        result: r.result as 'success' | 'failure' | 'blocked',
+        ipAddress: String(r.ip_address || ''),
+        metadata: (r.metadata as Record<string, unknown>) || {},
+        createdAt: new Date(String(r.created_at)).toISOString(),
+      }));
     },
 
     async createCase(
@@ -1171,7 +1561,9 @@ function createFileAdapter() {
 
     async hasAnyAdminUser(): Promise<boolean> {
       const store = ensureFileStore();
-      return store.users.some((u) => u.role === 'admin' && u.isActive);
+      return store.users.some(
+        (u) => (u.role === 'super_admin' || u.role === 'admin') && u.isActive
+      );
     },
 
     async listUsers(): Promise<AdminUser[]> {
@@ -1185,10 +1577,9 @@ function createFileAdapter() {
       return store.users.find((u) => u.email.toLowerCase() === target) ?? null;
     },
 
-    async getUserById(id: string): Promise<AdminUser | null> {
+    async getUserById(id: string): Promise<StoredUser | null> {
       const store = ensureFileStore();
-      const found = store.users.find((u) => u.id === id);
-      return found ? sanitizePublicUser(found) : null;
+      return store.users.find((u) => u.id === id) ?? null;
     },
 
     async createUser(input: {
@@ -1203,6 +1594,7 @@ function createFileAdapter() {
         if (store.users.some((u) => u.email.toLowerCase() === normalizedEmail)) {
           throw new Error('DUPLICATE_EMAIL');
         }
+        const now = new Date().toISOString();
         const user: StoredUser = {
           id: `usr-${crypto.randomUUID().slice(0, 12)}`,
           email: normalizedEmail,
@@ -1210,8 +1602,14 @@ function createFileAdapter() {
           passwordHash: hashPassword(input.password),
           role: input.role,
           isActive: true,
-          createdAt: new Date().toISOString(),
+          authProviderId: null,
+          createdAt: now,
+          updatedAt: now,
           lastLoginAt: null,
+          passwordUpdatedAt: now,
+          sessionVersion: 1,
+          mfaEnabled: false,
+          mfaSecret: null,
         };
         store.users.push(user);
         persistFileStore(store);
@@ -1227,11 +1625,55 @@ function createFileAdapter() {
         const store = structuredClone(ensureFileStore());
         const user = store.users.find((u) => u.id === id);
         if (!user) return null;
+        const shouldBump =
+          changes.isActive === false ||
+          (changes.role !== undefined && changes.role !== user.role);
         if (changes.role !== undefined) user.role = changes.role;
         if (changes.isActive !== undefined) user.isActive = changes.isActive;
         if (changes.name !== undefined) user.name = changes.name;
+        user.updatedAt = new Date().toISOString();
+        if (shouldBump) {
+          user.sessionVersion = (user.sessionVersion ?? 1) + 1;
+          const revokedAt = new Date().toISOString();
+          for (const s of store.sessions) {
+            if (s.userId === id && !s.revokedAt) s.revokedAt = revokedAt;
+          }
+        }
         persistFileStore(store);
         return sanitizePublicUser(user);
+      });
+    },
+
+    async updateUserPassword(userId: string, newPassword: string, keepSessionId?: string): Promise<boolean> {
+      return withStoreLock(() => {
+        const store = structuredClone(ensureFileStore());
+        const user = store.users.find((u) => u.id === userId);
+        if (!user) return false;
+        const now = new Date().toISOString();
+        user.passwordHash = hashPassword(newPassword);
+        user.passwordUpdatedAt = now;
+        user.updatedAt = now;
+        user.sessionVersion = (user.sessionVersion ?? 1) + 1;
+        for (const s of store.sessions) {
+          if (s.userId === userId && (!keepSessionId || s.id !== keepSessionId) && !s.revokedAt) {
+            s.revokedAt = now;
+          }
+        }
+        persistFileStore(store);
+        return true;
+      });
+    },
+
+    async updateUserMfa(userId: string, mfa: { enabled: boolean; secret: string | null }): Promise<boolean> {
+      return withStoreLock(() => {
+        const store = structuredClone(ensureFileStore());
+        const user = store.users.find((u) => u.id === userId);
+        if (!user) return false;
+        user.mfaEnabled = mfa.enabled;
+        user.mfaSecret = mfa.secret;
+        user.updatedAt = new Date().toISOString();
+        persistFileStore(store);
+        return true;
       });
     },
 
@@ -1240,10 +1682,236 @@ function createFileAdapter() {
         const store = structuredClone(ensureFileStore());
         const user = store.users.find((u) => u.id === id);
         if (user) {
-          user.lastLoginAt = new Date().toISOString();
+          const now = new Date().toISOString();
+          user.lastLoginAt = now;
+          user.updatedAt = now;
           persistFileStore(store);
         }
       });
+    },
+
+    async createSessionRecord(input: {
+      id: string;
+      userId: string | null;
+      tokenHash: string;
+      csrfToken: string;
+      role: AdminRole;
+      email: string;
+      name: string;
+      userAgent: string;
+      ipAddress: string;
+      sessionVersion: number;
+      expiresAt: string;
+    }): Promise<void> {
+      return withStoreLock(() => {
+        const store = structuredClone(ensureFileStore());
+        const now = new Date().toISOString();
+        store.sessions.unshift({
+          ...input,
+          revokedAt: null,
+          createdAt: now,
+          lastSeenAt: now,
+        });
+        persistFileStore(store);
+      });
+    },
+
+    async getSessionByTokenHash(tokenHash: string): Promise<StoredSession | null> {
+      const store = ensureFileStore();
+      return store.sessions.find((s) => s.tokenHash === tokenHash) ?? null;
+    },
+
+    async listSessions(userId?: string): Promise<AdminSessionInfo[]> {
+      const store = ensureFileStore();
+      const nowMs = Date.now();
+      return store.sessions
+        .filter(
+          (s) =>
+            !s.revokedAt &&
+            Date.parse(s.expiresAt) > nowMs &&
+            (!userId || s.userId === userId)
+        )
+        .map(({ tokenHash: _th, csrfToken: _ct, sessionVersion: _sv, ...rest }) => rest);
+    },
+
+    async revokeSessionById(sessionId: string, userId?: string): Promise<boolean> {
+      return withStoreLock(() => {
+        const store = structuredClone(ensureFileStore());
+        const target = store.sessions.find(
+          (s) => s.id === sessionId && (!userId || s.userId === userId)
+        );
+        if (!target) return false;
+        if (!target.revokedAt) target.revokedAt = new Date().toISOString();
+        persistFileStore(store);
+        return true;
+      });
+    },
+
+    async revokeSessionByTokenHash(tokenHash: string): Promise<void> {
+      return withStoreLock(() => {
+        const store = structuredClone(ensureFileStore());
+        const target = store.sessions.find((s) => s.tokenHash === tokenHash);
+        if (target && !target.revokedAt) {
+          target.revokedAt = new Date().toISOString();
+          persistFileStore(store);
+        }
+      });
+    },
+
+    async revokeAllUserSessions(userId: string): Promise<void> {
+      return withStoreLock(() => {
+        const store = structuredClone(ensureFileStore());
+        const now = new Date().toISOString();
+        for (const s of store.sessions) {
+          if (s.userId === userId && !s.revokedAt) s.revokedAt = now;
+        }
+        persistFileStore(store);
+      });
+    },
+
+    async createPasswordRecoveryToken(userId: string, ttlMs: number): Promise<string> {
+      return withStoreLock(() => {
+        const store = structuredClone(ensureFileStore());
+        const rawToken = crypto.randomBytes(32).toString('base64url');
+        const now = new Date().toISOString();
+        store.recoveryTokens.unshift({
+          id: `rec-${crypto.randomUUID().slice(0, 12)}`,
+          userId,
+          tokenHash: hashSecretToken(rawToken),
+          expiresAt: new Date(Date.now() + ttlMs).toISOString(),
+          usedAt: null,
+          createdAt: now,
+        });
+        persistFileStore(store);
+        return rawToken;
+      });
+    },
+
+    async consumePasswordRecoveryToken(
+      rawToken: string,
+      newPassword: string
+    ): Promise<{ userId: string; email: string } | null> {
+      return withStoreLock(() => {
+        const store = structuredClone(ensureFileStore());
+        const tokenHash = hashSecretToken(rawToken);
+        const tok = store.recoveryTokens.find((t) => t.tokenHash === tokenHash);
+        if (!tok || tok.usedAt || Date.parse(tok.expiresAt) < Date.now()) return null;
+        const user = store.users.find((u) => u.id === tok.userId);
+        if (!user || !user.isActive) return null;
+
+        const now = new Date().toISOString();
+        tok.usedAt = now;
+        user.passwordHash = hashPassword(newPassword);
+        user.passwordUpdatedAt = now;
+        user.updatedAt = now;
+        user.sessionVersion = (user.sessionVersion ?? 1) + 1;
+        for (const s of store.sessions) {
+          if (s.userId === user.id && !s.revokedAt) s.revokedAt = now;
+        }
+        persistFileStore(store);
+        return { userId: user.id, email: user.email };
+      });
+    },
+
+    async createInvitation(input: {
+      email: string;
+      name: string;
+      role: AdminRole;
+      invitedBy: string | null;
+      ttlMs: number;
+    }): Promise<{ invitation: AdminInvitation; rawToken: string }> {
+      return withStoreLock(() => {
+        const store = structuredClone(ensureFileStore());
+        const rawToken = crypto.randomBytes(32).toString('base64url');
+        const now = new Date().toISOString();
+        const stored: StoredInvitation = {
+          id: `inv-${crypto.randomUUID().slice(0, 12)}`,
+          email: input.email.toLowerCase(),
+          name: input.name,
+          role: input.role,
+          invitedBy: input.invitedBy,
+          expiresAt: new Date(Date.now() + input.ttlMs).toISOString(),
+          acceptedAt: null,
+          createdAt: now,
+          tokenHash: hashSecretToken(rawToken),
+        };
+        store.invitations.unshift(stored);
+        persistFileStore(store);
+        const { tokenHash: _th, ...invitation } = stored;
+        return { invitation, rawToken };
+      });
+    },
+
+    async listInvitations(): Promise<AdminInvitation[]> {
+      const store = ensureFileStore();
+      return store.invitations.map(({ tokenHash: _th, ...rest }) => rest).slice(0, 50);
+    },
+
+    async acceptInvitation(rawToken: string, password: string): Promise<AdminUser | null> {
+      return withStoreLock(() => {
+        const store = structuredClone(ensureFileStore());
+        const tokenHash = hashSecretToken(rawToken);
+        const inv = store.invitations.find((i) => i.tokenHash === tokenHash);
+        if (!inv || inv.acceptedAt || Date.parse(inv.expiresAt) < Date.now()) return null;
+        if (store.users.some((u) => u.email.toLowerCase() === inv.email.toLowerCase())) {
+          return null;
+        }
+        const now = new Date().toISOString();
+        const user: StoredUser = {
+          id: `usr-${crypto.randomUUID().slice(0, 12)}`,
+          email: inv.email.toLowerCase(),
+          name: inv.name,
+          passwordHash: hashPassword(password),
+          role: inv.role,
+          isActive: true,
+          authProviderId: null,
+          createdAt: now,
+          updatedAt: now,
+          lastLoginAt: null,
+          passwordUpdatedAt: now,
+          sessionVersion: 1,
+          mfaEnabled: false,
+          mfaSecret: null,
+        };
+        inv.acceptedAt = now;
+        store.users.push(user);
+        persistFileStore(store);
+        return sanitizePublicUser(user);
+      });
+    },
+
+    async recordAuthAuditEvent(input: {
+      userId: string | null;
+      actorEmail: string;
+      eventType: string;
+      result: 'success' | 'failure' | 'blocked';
+      ipAddress: string;
+      metadata?: Record<string, unknown>;
+    }): Promise<void> {
+      return withStoreLock(() => {
+        const store = structuredClone(ensureFileStore());
+        store.authAuditEvents.unshift({
+          id: `auth-${crypto.randomUUID().slice(0, 12)}`,
+          userId: input.userId,
+          actorEmail: input.actorEmail,
+          eventType: input.eventType,
+          result: input.result,
+          ipAddress: input.ipAddress,
+          metadata: input.metadata || {},
+          createdAt: new Date().toISOString(),
+        });
+        if (store.authAuditEvents.length > 500) {
+          store.authAuditEvents.length = 500;
+        }
+        persistFileStore(store);
+      });
+    },
+
+    async listAuthAuditEvents(limit = 100): Promise<AuthAuditEvent[]> {
+      const store = ensureFileStore();
+      return [...store.authAuditEvents]
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+        .slice(0, Math.min(300, Math.max(1, limit)));
     },
 
     async createCase(
