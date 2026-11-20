@@ -158,6 +158,13 @@ export const SERVICE_OFFERINGS: ServiceOffering[] = [
   },
 ];
 
+export const TARGET_TIMELINES = [
+  'Immediate (1–2 weeks)',
+  'Within 30 days',
+  'This quarter',
+  'Advisory / Ongoing',
+] as const;
+
 export const CLIENT_TIER_SOLUTIONS: ClientTierSolution[] = [
   {
     id: 'individual',

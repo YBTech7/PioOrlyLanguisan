@@ -26,6 +26,17 @@ export function isStaticHostWithoutApi(): boolean {
   return window.location.hostname.endsWith('github.io') && !isExternalApiConfigured();
 }
 
+function readCsrfCookie(): string | null {
+  if (typeof document === 'undefined') return null;
+  const match = document.cookie.match(/(?:^|;\s*)pl_csrf=([^;]+)/);
+  if (!match) return null;
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return match[1];
+  }
+}
+
 export async function apiFetch<T>(
   path: string,
   options: RequestInit & { timeoutMs?: number } = {}
@@ -41,12 +52,16 @@ export async function apiFetch<T>(
   const { timeoutMs = 15000, headers, ...rest } = options;
   const controller = new AbortController();
   const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  const method = (rest.method || 'GET').toUpperCase();
+  const csrfToken = !['GET', 'HEAD', 'OPTIONS'].includes(method) ? readCsrfCookie() : null;
 
   try {
     const response = await fetch(getApiUrl(path), {
+      credentials: 'include',
       ...rest,
       headers: {
         ...(rest.body ? { 'Content-Type': 'application/json' } : {}),
+        ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {}),
         ...(headers || {}),
       },
       signal: controller.signal,

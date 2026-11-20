@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { CheckCircle2, Send } from 'lucide-react';
-import { CLIENT_TIER_SOLUTIONS, SERVICE_OFFERINGS } from '../data/profileData';
+import { CLIENT_TIER_SOLUTIONS, SERVICE_OFFERINGS, TARGET_TIMELINES } from '../data/profileData';
 import { ApiError, apiFetch } from '../lib/apiClient';
+import { getServiceDomainLabel, getTierLabel } from '../lib/caseAnalytics';
 import {
   DEFAULT_PHONE_COUNTRY,
   validateAndNormalizePhone,
@@ -98,6 +99,7 @@ export const ConsultationSection: React.FC<ConsultationSectionProps> = ({
       };
       if (phoneCheck.e164) {
         fields.phone = phoneCheck.e164;
+        fields.phoneCountry = phoneCheck.country || phoneCountry;
       }
       const payload = JSON.stringify(fields);
       if (submission.current?.payload !== payload) {
@@ -203,14 +205,22 @@ export const ConsultationSection: React.FC<ConsultationSectionProps> = ({
                     Thank you, {submittedRecord.name}. Your inquiry has been logged for review.
                   </p>
                   <div className="rounded-xl border border-[#C8A253]/18 bg-[#06141E] p-4 text-xs text-[#C2D0D6] space-y-1.5">
+                    {submittedRecord.caseNumber && (
+                      <p>
+                        Case Reference:{' '}
+                        <span className="font-mono font-semibold text-[#DFC585]">
+                          {submittedRecord.caseNumber}
+                        </span>
+                      </p>
+                    )}
                     <p>
-                      Reference ID:{' '}
-                      <span className="font-mono font-semibold text-[#DFC585]">
+                      Tracking ID:{' '}
+                      <span className="font-mono font-semibold text-[#F5F2EB]">
                         {submittedRecord.id}
                       </span>
                     </p>
-                    <p>Organization Tier: {submittedRecord.tier}</p>
-                    <p>Primary Focus: {submittedRecord.serviceDomain}</p>
+                    <p>Organization Tier: {getTierLabel(submittedRecord.tier)}</p>
+                    <p>Primary Focus: {getServiceDomainLabel(submittedRecord.serviceDomain)}</p>
                     <p>Target Timeline: {submittedRecord.timeline}</p>
                   </div>
                   <button
@@ -362,10 +372,11 @@ export const ConsultationSection: React.FC<ConsultationSectionProps> = ({
                         onChange={(e) => setTimeline(e.target.value)}
                         className="mt-1.5 min-h-[42px] w-full rounded-lg border border-[#C8A253]/25 bg-[#06141E] px-3.5 py-2 text-sm text-[#F5F2EB] focus:border-[#C8A253] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#C8A253]"
                       >
-                        <option value="Immediate (1–2 weeks)">Immediate (1–2 weeks)</option>
-                        <option value="Within 30 days">Within 30 days</option>
-                        <option value="This quarter">This quarter</option>
-                        <option value="Advisory / Ongoing">Advisory / Ongoing</option>
+                        {TARGET_TIMELINES.map((item) => (
+                          <option key={item} value={item}>
+                            {item}
+                          </option>
+                        ))}
                       </select>
                     </div>
                   </div>

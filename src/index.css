@@ -35,6 +35,10 @@
     font-family: "Outfit", system-ui, -apple-system, sans-serif;
   }
 
+  .font-editorial {
+    font-family: "Palatino Linotype", "Book Antiqua", Palatino, Georgia, serif;
+  }
+
   ::selection {
     background-color: rgba(200, 162, 83, 0.28);
     color: #f5f2eb;

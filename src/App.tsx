@@ -52,7 +52,13 @@ export default function App() {
   const [consultSummary, setConsultSummary] = useState<string>('');
 
   const [advisorOpen, setAdvisorOpen] = useState(false);
-  const [adminOpen, setAdminOpen] = useState(false);
+  const [adminOpen, setAdminOpen] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return (
+      window.location.pathname.endsWith('/admin') ||
+      window.location.hash === '#admin'
+    );
+  });
 
   const loadSiteContent = useCallback(async () => {
     try {

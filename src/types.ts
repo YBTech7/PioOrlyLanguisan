@@ -8,7 +8,18 @@ export type ServiceDomainId =
   | 'account-management'
   | 'web-creation';
 
-export type InquiryStatus = 'New' | 'In Review' | 'Scheduled' | 'Completed';
+export type TargetTimelineValue =
+  | 'Immediate (1–2 weeks)'
+  | 'Within 30 days'
+  | 'This quarter'
+  | 'Advisory / Ongoing';
+
+export type CaseStatus = 'New' | 'Pending' | 'Follow Up' | 'Completed';
+export type InquiryStatus = CaseStatus;
+
+export type CasePriority = 'Low' | 'Normal' | 'High' | 'Urgent';
+
+export type AdminRole = 'admin' | 'staff';
 
 export interface ServiceOffering {
   id: ServiceDomainId;
@@ -64,24 +75,154 @@ export interface FaqItem {
 
 export type EmailDeliveryState = 'pending' | 'sending' | 'sent' | 'review';
 
-export interface InquiryRecord {
+export interface AdminUser {
   id: string;
+  email: string;
+  name: string;
+  role: AdminRole;
+  isActive: boolean;
+  createdAt: string;
+  lastLoginAt: string | null;
+}
+
+export interface CaseRecord {
+  id: string;
+  caseNumber: string;
   name: string;
   email: string;
+  phoneCountryCode?: string | null;
   phone?: string;
   company: string;
   tier: ClientTierId;
   serviceDomain: ServiceDomainId;
-  timeline: string;
+  timeline: TargetTimelineValue;
   message: string;
-  status: InquiryStatus;
+  status: CaseStatus;
+  priority: CasePriority;
+  assignedTo: string | null;
+  assignedToName?: string | null;
+  assignedToEmail?: string | null;
   createdAt: string;
+  followUpAt: string | null;
+  deadlineAt: string | null;
+  updatedAt: string;
+  version: number;
   notes?: string;
   emailStatus?: EmailDeliveryState;
   emailAttempts?: number;
   providerMessageId?: string | null;
   lastEmailHttpStatus?: number | null;
   lastEmailStage?: string | null;
+}
+
+export type InquiryRecord = CaseRecord;
+
+export interface CaseStatusHistoryEntry {
+  id: string;
+  caseId: string;
+  previousStatus: CaseStatus | null;
+  newStatus: CaseStatus;
+  changedBy: string | null;
+  changedByEmail: string;
+  note: string;
+  changedAt: string;
+}
+
+export interface CaseNote {
+  id: string;
+  caseId: string;
+  authorId: string | null;
+  authorEmail: string;
+  content: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CaseActivityEntry {
+  id: string;
+  caseId: string | null;
+  caseNumber?: string;
+  actorId: string | null;
+  actorEmail: string;
+  action: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface AdminNotification {
+  id: string;
+  recipientId: string | null;
+  caseId: string | null;
+  caseNumber?: string;
+  type: string;
+  title: string;
+  message: string;
+  readAt: string | null;
+  createdAt: string;
+}
+
+export interface CaseDetailPayload {
+  caseRecord: CaseRecord;
+  statusHistory: CaseStatusHistoryEntry[];
+  notes: CaseNote[];
+  activity: CaseActivityEntry[];
+}
+
+export interface KpiSummary {
+  totalRequests: number;
+  newRequests: number;
+  pendingRequests: number;
+  followUpRequests: number;
+  completedRequests: number;
+  overdueCases: number;
+  dueSoonCases: number;
+  completionRate: number;
+}
+
+export interface DistributionRow {
+  key: string;
+  label: string;
+  count: number;
+  percentage: number;
+  overdueCount?: number;
+  dueSoonCount?: number;
+}
+
+export interface MatrixRow {
+  key: string;
+  label: string;
+  New: number;
+  Pending: number;
+  'Follow Up': number;
+  Completed: number;
+  total: number;
+  completionRate: number;
+}
+
+export interface MonthlyTrendPoint {
+  month: string;
+  submitted: number;
+  completed: number;
+}
+
+export interface DashboardAnalytics {
+  kpis: KpiSummary;
+  previousKpis: KpiSummary | null;
+  byStatus: DistributionRow[];
+  byServiceDomain: DistributionRow[];
+  byTimeline: DistributionRow[];
+  serviceDomainMatrix: MatrixRow[];
+  timelineMatrix: MatrixRow[];
+  monthlyTrends: MonthlyTrendPoint[];
+}
+
+export interface CaseListResponse {
+  items: CaseRecord[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+  statusCounts: Record<CaseStatus | 'All', number>;
 }
 
 export interface BrandSettings {

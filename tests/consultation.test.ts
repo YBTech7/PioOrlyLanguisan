@@ -11,6 +11,7 @@ describe('Consultation Email & PostgreSQL Persistence', () => {
   it('formats consultation email notification with E.164 phone or Not provided and preserves headers', () => {
     const withPhone: InquiryRecord = {
       id: 'INQ-2026-PHONE01',
+      caseNumber: 'CASE-000010',
       name: 'Maria Santos',
       email: 'maria@example.com',
       phone: '+639171234567',
@@ -20,10 +21,17 @@ describe('Consultation Email & PostgreSQL Persistence', () => {
       timeline: 'Within 30 days',
       message: 'Need technical support escalation architecture.',
       status: 'New',
+      priority: 'Normal',
+      assignedTo: null,
+      followUpAt: null,
+      deadlineAt: null,
       createdAt: '2026-11-18T08:00:00.000Z',
+      updatedAt: '2026-11-18T08:00:00.000Z',
+      version: 1,
     };
 
     const bodyWithPhone = formatConsultationEmailBody(withPhone);
+    expect(bodyWithPhone).toContain('Case Reference: CASE-000010');
     expect(bodyWithPhone).toContain('Tracking ID: INQ-2026-PHONE01');
     expect(bodyWithPhone).toContain('Email address: maria@example.com');
     expect(bodyWithPhone).toContain('Contact number: +639171234567');
@@ -35,6 +43,7 @@ describe('Consultation Email & PostgreSQL Persistence', () => {
 
     const withoutPhone: InquiryRecord = {
       id: 'INQ-2026-LEGACY1',
+      caseNumber: 'CASE-000011',
       name: 'Alex Legacy',
       email: 'alex@example.com',
       company: '',
@@ -43,7 +52,13 @@ describe('Consultation Email & PostgreSQL Persistence', () => {
       timeline: 'This quarter',
       message: 'Weekly analytics model setup.',
       status: 'New',
+      priority: 'Normal',
+      assignedTo: null,
+      followUpAt: null,
+      deadlineAt: null,
       createdAt: '2026-11-18T08:05:00.000Z',
+      updatedAt: '2026-11-18T08:05:00.000Z',
+      version: 1,
     };
 
     const bodyWithoutPhone = formatConsultationEmailBody(withoutPhone);
@@ -59,6 +74,7 @@ describe('Consultation Email & PostgreSQL Persistence', () => {
       const oldServer = postgres(url);
       const inquiry: InquiryRecord = {
         id: 'INQ-TEST',
+        caseNumber: 'CASE-000099',
         name: 'Test Visitor',
         email: 'test@example.com',
         phone: '+639171234567',
@@ -68,7 +84,13 @@ describe('Consultation Email & PostgreSQL Persistence', () => {
         timeline: 'Within 30 days',
         message: 'A test consultation request.',
         status: 'New',
+        priority: 'Normal',
+        assignedTo: null,
+        followUpAt: null,
+        deadlineAt: null,
         createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+        version: 1,
       };
       const key = 'ae901555-d79b-4ece-96dc-063bd9a0f6b1';
       const recovered = openInbox(url);
@@ -80,12 +102,12 @@ describe('Consultation Email & PostgreSQL Persistence', () => {
         expect(
           await inbox.save({ ...inquiry, message: 'A different consultation request.' }, key)
         ).toBeNull();
-        expect(await inbox.update(inquiry.id, { status: 'In Review' })).toMatchObject({
-          status: 'In Review',
+        expect(await inbox.update(inquiry.id, { status: 'Pending' })).toMatchObject({
+          status: 'Pending',
         });
         expect(await inbox.save(inquiry, key)).toMatchObject({
           id: inquiry.id,
-          status: 'In Review',
+          status: 'Pending',
           phone: '+639171234567',
         });
         await oldServer`UPDATE consultation_inbox

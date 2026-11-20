@@ -4,18 +4,28 @@ import {
   getConsultationMailerConfig,
   runConsultationMailer,
 } from './consultation.ts';
+import {
+  getCaseRepository,
+  resetRepositoryForTests,
+  verifyPassword,
+  type CaseActor,
+  type CaseQueryFilters,
+  type CaseUpdateInput,
+} from './db/caseRepository.ts';
+import {
+  buildCasesCsvReport,
+  CASE_STATUSES,
+  computeDashboardAnalytics,
+} from './src/lib/caseAnalytics.ts';
 import express from 'express';
 import type { Request, Response, NextFunction, Express } from 'express';
-import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { GoogleGenAI, Type, ThinkingLevel } from '@google/genai';
 import {
-  INITIAL_FAQS,
-  INITIAL_INSIGHTS,
-  INITIAL_PROJECTS,
   SERVICE_OFFERINGS,
   CLIENT_TIER_SOLUTIONS,
+  TARGET_TIMELINES,
   WORKFLOW_VISUAL_URL,
 } from './src/data/profileData.ts';
 import {
@@ -23,23 +33,29 @@ import {
   validateAndNormalizePhone,
 } from './src/lib/phone.ts';
 import type {
+  AdminRole,
   AiScopeRecommendation,
-  BrandSettings,
+  CasePriority,
+  CaseStatus,
   ClientTierId,
-  FaqItem,
-  InquiryRecord,
-  InquiryStatus,
-  InsightArticle,
   ProjectCase,
   ServiceDomainId,
+  TargetTimelineValue,
 } from './src/types.ts';
 
-interface PersistentStore {
-  inquiries: InquiryRecord[];
-  projects: ProjectCase[];
-  insights: InsightArticle[];
-  faqs: FaqItem[];
-  brand: BrandSettings;
+interface SessionRecord {
+  token: string;
+  csrfToken: string;
+  userId: string | null;
+  email: string;
+  name: string;
+  role: AdminRole;
+  expiresAt: number;
+}
+
+interface AuthenticatedRequest extends Request {
+  authSession?: SessionRecord;
+  authViaCookie?: boolean;
 }
 
 const VALID_TIERS: ClientTierId[] = ['individual', 'startup', 'smb', 'enterprise'];
@@ -51,134 +67,29 @@ const VALID_SERVICES: ServiceDomainId[] = [
   'account-management',
   'web-creation',
 ];
-const VALID_STATUSES: InquiryStatus[] = ['New', 'In Review', 'Scheduled', 'Completed'];
+const VALID_TIMELINES: readonly string[] = TARGET_TIMELINES;
+const VALID_PRIORITIES: CasePriority[] = ['Low', 'Normal', 'High', 'Urgent'];
 const ALLOWED_RASTER_DATA_URL_RE = /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/=]+)$/;
-const MAX_UPLOAD_BYTES = 2 * 1024 * 1024; // 2MB decoded limit
-const ADMIN_TOKEN_TTL_MS = 1000 * 60 * 60 * 4; // 4 hours
+const MAX_UPLOAD_BYTES = 2 * 1024 * 1024;
+const ADMIN_TOKEN_TTL_MS = 1000 * 60 * 60 * 4;
 const GEMINI_TIMEOUT_MS = 20000;
+const SESSION_COOKIE_NAME = 'pl_session';
+const CSRF_COOKIE_NAME = 'pl_csrf';
 
-const DATA_DIR = path.resolve(process.cwd(), 'data');
-
-function getStorePath(): string {
-  return process.env.DATA_STORE_PATH
-    ? path.resolve(process.env.DATA_STORE_PATH)
-    : path.join(DATA_DIR, 'store.json');
+const EPHEMERAL_SESSION_SECRET = crypto.randomBytes(32).toString('hex');
+function getSessionSecret(): string {
+  return (process.env.SESSION_SECRET || process.env.ADMIN_PASSCODE || EPHEMERAL_SESSION_SECRET).trim();
 }
 
-const DEFAULT_BRAND: BrandSettings = {
-  customPortraitDataUrl: null,
-  customLogoDataUrl: null,
-  motionEnabled: true,
-  motionSensitivity: 1,
-};
-
-let memoryStore: PersistentStore | null = null;
+const activeSessions = new Map<string, SessionRecord>();
+const rateLimitBuckets = new Map<string, { count: number; resetAt: number }>();
+const loginFailureBuckets = new Map<string, { failures: number; lockedUntil: number; resetAt: number }>();
 
 export function resetServerStateForTests(): void {
-  memoryStore = null;
-  activeAdminTokens.clear();
+  resetRepositoryForTests();
+  activeSessions.clear();
   rateLimitBuckets.clear();
   loginFailureBuckets.clear();
-}
-
-function normalizeAssetPath(imageUrl: string): string {
-  if (!imageUrl) return WORKFLOW_VISUAL_URL;
-  if (imageUrl.startsWith('/src/assets/')) {
-    return imageUrl.slice(5);
-  }
-  if (imageUrl.startsWith('/assets/')) {
-    return imageUrl.slice(1);
-  }
-  return imageUrl;
-}
-
-function createInitialStore(): PersistentStore {
-  return {
-    inquiries: [
-      {
-        id: 'INQ-2026-SAMPLE01',
-        name: 'Elena Rostova',
-        email: 'elena@northstar-ops.example',
-        company: 'Northstar Logistics',
-        tier: 'smb',
-        serviceDomain: 'data-analytics',
-        timeline: 'Within 30 days',
-        message:
-          'Looking to consolidate weekly customer support and account renewal spreadsheets into a single executive KPI dashboard.',
-        status: 'In Review',
-        createdAt: '2026-11-15T14:20:00.000Z',
-        notes: 'Sample development record.',
-      },
-    ],
-    projects: INITIAL_PROJECTS,
-    insights: INITIAL_INSIGHTS,
-    faqs: INITIAL_FAQS,
-    brand: DEFAULT_BRAND,
-  };
-}
-
-function ensureStore(): PersistentStore {
-  if (memoryStore) {
-    return memoryStore;
-  }
-
-  const storePath = getStorePath();
-  const dir = path.dirname(storePath);
-
-  try {
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-    if (!fs.existsSync(storePath)) {
-      const initial = createInitialStore();
-      fs.writeFileSync(storePath, JSON.stringify(initial, null, 2), 'utf-8');
-      memoryStore = initial;
-      return initial;
-    }
-
-    const raw = fs.readFileSync(storePath, 'utf-8');
-    const parsed = JSON.parse(raw) as Partial<PersistentStore>;
-    const projects =
-      Array.isArray(parsed.projects) && parsed.projects.length > 0
-        ? parsed.projects.map((p) => ({
-            ...p,
-            imageUrl: normalizeAssetPath(p.imageUrl),
-          }))
-        : INITIAL_PROJECTS;
-
-    const hydrated: PersistentStore = {
-      inquiries: Array.isArray(parsed.inquiries) ? parsed.inquiries : [],
-      projects,
-      insights:
-        Array.isArray(parsed.insights) && parsed.insights.length > 0
-          ? parsed.insights
-          : INITIAL_INSIGHTS,
-      faqs:
-        Array.isArray(parsed.faqs) && parsed.faqs.length > 0
-          ? parsed.faqs
-          : INITIAL_FAQS,
-      brand: { ...DEFAULT_BRAND, ...(parsed.brand || {}) },
-    };
-    memoryStore = hydrated;
-    return hydrated;
-  } catch {
-    memoryStore = createInitialStore();
-    return memoryStore;
-  }
-}
-
-function saveStore(store: PersistentStore): void {
-  memoryStore = store;
-  const storePath = getStorePath();
-  const dir = path.dirname(storePath);
-  try {
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-    fs.writeFileSync(storePath, JSON.stringify(store, null, 2), 'utf-8');
-  } catch {
-    // Keep updated in memoryStore if filesystem is read-only
-  }
 }
 
 function getGeminiClient(): GoogleGenAI {
@@ -232,10 +143,6 @@ Guidelines:
 2. Never invent fabricated past employers, degrees, certifications, or fake client names.
 3. Recommend concrete deliverables and suggest scheduling a consultation when ready.`;
 
-const activeAdminTokens = new Map<string, number>();
-const rateLimitBuckets = new Map<string, { count: number; resetAt: number }>();
-const loginFailureBuckets = new Map<string, { failures: number; lockedUntil: number; resetAt: number }>();
-
 function getClientIp(req: Request): string {
   const forwarded = req.headers['x-forwarded-for'];
   if (typeof forwarded === 'string' && forwarded.length > 0) {
@@ -267,11 +174,11 @@ function createRateLimiter(bucketPrefix: string, maxRequests: number, windowMs: 
   };
 }
 
-function pruneExpiredTokens(): void {
+function pruneExpiredSessions(): void {
   const now = Date.now();
-  for (const [tok, exp] of activeAdminTokens.entries()) {
-    if (now > exp) {
-      activeAdminTokens.delete(tok);
+  for (const [tok, session] of activeSessions.entries()) {
+    if (now > session.expiresAt) {
+      activeSessions.delete(tok);
     }
   }
 }
@@ -282,21 +189,163 @@ function timingSafeMatch(provided: string, expected: string): boolean {
   return crypto.timingSafeEqual(providedHash, expectedHash);
 }
 
-function requireAdmin(req: Request, res: Response, next: NextFunction): void {
-  pruneExpiredTokens();
-  const header = req.headers.authorization || '';
-  const token = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
-  if (!token) {
+function signToken(token: string): string {
+  const sig = crypto
+    .createHmac('sha256', getSessionSecret())
+    .update(token)
+    .digest('hex');
+  return `${token}.${sig}`;
+}
+
+function verifySignedToken(signedValue: string): string | null {
+  const dotIdx = signedValue.lastIndexOf('.');
+  if (dotIdx <= 0) return null;
+  const rawToken = signedValue.slice(0, dotIdx);
+  const providedSig = signedValue.slice(dotIdx + 1);
+  const expectedSig = crypto
+    .createHmac('sha256', getSessionSecret())
+    .update(rawToken)
+    .digest('hex');
+  if (providedSig.length !== expectedSig.length) return null;
+  const ok = crypto.timingSafeEqual(
+    Buffer.from(providedSig, 'utf-8'),
+    Buffer.from(expectedSig, 'utf-8')
+  );
+  return ok ? rawToken : null;
+}
+
+function parseCookies(cookieHeader: string | undefined): Record<string, string> {
+  const result: Record<string, string> = {};
+  if (!cookieHeader) return result;
+  for (const part of cookieHeader.split(';')) {
+    const eq = part.indexOf('=');
+    if (eq <= 0) continue;
+    const key = part.slice(0, eq).trim();
+    const val = part.slice(eq + 1).trim();
+    try {
+      result[key] = decodeURIComponent(val);
+    } catch {
+      result[key] = val;
+    }
+  }
+  return result;
+}
+
+function createSession(actor: CaseActor): SessionRecord {
+  pruneExpiredSessions();
+  const token = crypto.randomBytes(32).toString('hex');
+  const csrfToken = crypto.randomBytes(24).toString('hex');
+  const session: SessionRecord = {
+    token,
+    csrfToken,
+    userId: actor.id,
+    email: actor.email,
+    name: actor.name,
+    role: actor.role,
+    expiresAt: Date.now() + ADMIN_TOKEN_TTL_MS,
+  };
+  activeSessions.set(token, session);
+  return session;
+}
+
+function setSessionCookies(req: Request, res: Response, session: SessionRecord): void {
+  const isHttps = req.secure || req.headers['x-forwarded-proto'] === 'https';
+  const sameSite = isHttps ? 'None' : 'Lax';
+  const secureFlag = isHttps ? '; Secure' : '';
+  const maxAge = Math.floor(ADMIN_TOKEN_TTL_MS / 1000);
+  res.setHeader('Set-Cookie', [
+    `${SESSION_COOKIE_NAME}=${encodeURIComponent(signToken(session.token))}; Path=/; HttpOnly; SameSite=${sameSite}; Max-Age=${maxAge}${secureFlag}`,
+    `${CSRF_COOKIE_NAME}=${encodeURIComponent(session.csrfToken)}; Path=/; SameSite=${sameSite}; Max-Age=${maxAge}${secureFlag}`,
+  ]);
+}
+
+function clearSessionCookies(req: Request, res: Response): void {
+  const isHttps = req.secure || req.headers['x-forwarded-proto'] === 'https';
+  const sameSite = isHttps ? 'None' : 'Lax';
+  const secureFlag = isHttps ? '; Secure' : '';
+  res.setHeader('Set-Cookie', [
+    `${SESSION_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=${sameSite}; Max-Age=0${secureFlag}`,
+    `${CSRF_COOKIE_NAME}=; Path=/; SameSite=${sameSite}; Max-Age=0${secureFlag}`,
+  ]);
+}
+
+function extractSessionFromRequest(req: Request): { session: SessionRecord | null; viaCookie: boolean } {
+  pruneExpiredSessions();
+  const authHeader = req.headers.authorization || '';
+  if (authHeader.startsWith('Bearer ')) {
+    const bearer = authHeader.slice(7).trim();
+    if (bearer) {
+      const found = activeSessions.get(bearer);
+      if (found && Date.now() <= found.expiresAt) {
+        return { session: found, viaCookie: false };
+      }
+    }
+    return { session: null, viaCookie: false };
+  }
+
+  const cookies = parseCookies(req.headers.cookie);
+  const signedCookie = cookies[SESSION_COOKIE_NAME];
+  if (signedCookie) {
+    const rawToken = verifySignedToken(signedCookie);
+    if (rawToken) {
+      const found = activeSessions.get(rawToken);
+      if (found && Date.now() <= found.expiresAt) {
+        return { session: found, viaCookie: true };
+      }
+    }
+  }
+
+  return { session: null, viaCookie: false };
+}
+
+function requireAuth(req: AuthenticatedRequest, res: Response, next: NextFunction): void {
+  const { session, viaCookie } = extractSessionFromRequest(req);
+  if (!session) {
     res.status(401).json({ error: 'Authentication required.' });
     return;
   }
-  const expiresAt = activeAdminTokens.get(token);
-  if (!expiresAt || Date.now() > expiresAt) {
-    activeAdminTokens.delete(token);
-    res.status(401).json({ error: 'Session expired. Please sign in again.' });
+
+  if (viaCookie && !['GET', 'HEAD', 'OPTIONS'].includes(req.method.toUpperCase())) {
+    const headerCsrf = String(req.headers['x-csrf-token'] || '');
+    if (!headerCsrf || !timingSafeMatch(headerCsrf, session.csrfToken)) {
+      res.status(403).json({ error: 'Invalid or missing CSRF verification token.' });
+      return;
+    }
+  }
+
+  req.authSession = session;
+  req.authViaCookie = viaCookie;
+  next();
+}
+
+function requireAdminRole(req: AuthenticatedRequest, res: Response, next: NextFunction): void {
+  if (!req.authSession) {
+    res.status(401).json({ error: 'Authentication required.' });
+    return;
+  }
+  if (req.authSession.role !== 'admin') {
+    res.status(403).json({ error: 'Administrator privileges are required for this action.' });
     return;
   }
   next();
+}
+
+function sessionToActor(session: SessionRecord): CaseActor {
+  return {
+    id: session.userId,
+    email: session.email,
+    name: session.name,
+    role: session.role,
+  };
+}
+
+function normalizeStatusInput(value: unknown): CaseStatus | null {
+  if (value === 'New' || value === 'Pending' || value === 'Follow Up' || value === 'Completed') {
+    return value;
+  }
+  if (value === 'In Review') return 'Pending';
+  if (value === 'Scheduled') return 'Follow Up';
+  return null;
 }
 
 function validateRasterDataUrl(value: unknown): { valid: boolean; error?: string } {
@@ -385,6 +434,34 @@ function formatGeminiError(err: unknown): { status: number; message: string } {
   };
 }
 
+function checkLoginLockout(ip: string, res: Response): boolean {
+  const now = Date.now();
+  const record = loginFailureBuckets.get(ip);
+  if (record && record.lockedUntil > now) {
+    const waitSec = Math.max(1, Math.ceil((record.lockedUntil - now) / 1000));
+    res.setHeader('Retry-After', String(waitSec));
+    res.status(429).json({
+      error: `Too many failed login attempts. Try again in ${waitSec} seconds.`,
+    });
+    return true;
+  }
+  return false;
+}
+
+function recordLoginFailure(ip: string): void {
+  const now = Date.now();
+  const record = loginFailureBuckets.get(ip);
+  const current =
+    record && now <= record.resetAt
+      ? record
+      : { failures: 0, lockedUntil: 0, resetAt: now + 15 * 60 * 1000 };
+  current.failures += 1;
+  if (current.failures >= 5) {
+    current.lockedUntil = now + 15 * 60 * 1000;
+  }
+  loginFailureBuckets.set(ip, current);
+}
+
 export function createApiApp(): Express {
   const app = express();
   const isProd = process.env.NODE_ENV === 'production';
@@ -393,21 +470,23 @@ export function createApiApp(): Express {
   app.use(express.json({ limit: '3mb' }));
 
   // HTTP Security Headers
-  app.use((_req, res, next) => {
+  app.use((req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
-    res.setHeader('X-Frame-Options', 'DENY');
+    if (req.path.startsWith('/api')) {
+      res.setHeader('X-Frame-Options', 'DENY');
+    }
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
     res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
     if (isProd) {
       res.setHeader(
         'Content-Security-Policy',
-        "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; script-src 'self'; connect-src 'self'; frame-ancestors 'none';"
+        "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; script-src 'self'; connect-src 'self';"
       );
     }
     next();
   });
 
-  // CORS for decoupled static frontend (e.g., GitHub Pages) -> Backend API
+  // Strict CORS origin allowlist for decoupled static frontend (e.g., GitHub Pages)
   const allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
     .split(',')
     .map((o) => o.trim())
@@ -417,9 +496,10 @@ export function createApiApp(): Express {
     const origin = req.headers.origin;
     if (origin && allowedOrigins.includes(origin)) {
       res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Access-Control-Allow-Credentials', 'true');
       res.setHeader('Vary', 'Origin');
       res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,DELETE,OPTIONS');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-CSRF-Token');
     }
     if (req.method === 'OPTIONS') {
       res.status(204).end();
@@ -429,28 +509,28 @@ export function createApiApp(): Express {
   });
 
   app.get('/api/health', (_req, res) => {
+    const repo = getCaseRepository();
     const mailerConfig = getConsultationMailerConfig();
     res.json({
       ok: true,
       timestamp: new Date().toISOString(),
       geminiConfigured: Boolean(process.env.GEMINI_API_KEY),
       adminConfigured: Boolean(process.env.ADMIN_PASSCODE),
-      consultationStorage: consultationInbox ? 'postgres' : 'file',
+      consultationStorage: repo.storageMode,
       consultationMailerConfigured: Boolean(mailerConfig),
       consultationSameSenderRecipient: mailerConfig ? mailerConfig.sameSenderRecipient : null,
     });
   });
 
-  app.get('/api/content', (_req, res) => {
-    const store = ensureStore();
-    res.json({
-      projects: store.projects,
-      insights: store.insights,
-      faqs: store.faqs,
-      brand: store.brand,
-    });
+  app.get('/api/content', async (_req, res) => {
+    const repo = getCaseRepository();
+    const content = await repo.getSiteContent();
+    res.json(content);
   });
 
+  // -------------------------------------------------------------------------
+  // Public Consultation Submission -> Persisted Case with Status "New"
+  // -------------------------------------------------------------------------
   const inquiryLimiter = createRateLimiter('inquiries', 10, 15 * 60 * 1000);
   app.post('/api/inquiries', inquiryLimiter, async (req, res) => {
     const {
@@ -471,6 +551,7 @@ export function createApiApp(): Express {
       res.status(201).json({
         inquiry: {
           id: `INQ-${new Date().getFullYear()}-ACCEPTED`,
+          caseNumber: 'CASE-000000',
           name: 'Submitted',
           email: '',
           company: '',
@@ -479,7 +560,13 @@ export function createApiApp(): Express {
           timeline: 'Within 30 days',
           message: '',
           status: 'New',
+          priority: 'Normal',
+          assignedTo: null,
+          followUpAt: null,
+          deadlineAt: null,
           createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          version: 1,
         },
       });
       return;
@@ -523,7 +610,7 @@ export function createApiApp(): Express {
       res.status(400).json({ error: 'Invalid service domain selected.' });
       return;
     }
-    if (trimmedTimeline.length === 0 || trimmedTimeline.length > 60) {
+    if (!VALID_TIMELINES.includes(trimmedTimeline)) {
       res.status(400).json({ error: 'Please choose a valid target timeline.' });
       return;
     }
@@ -534,68 +621,75 @@ export function createApiApp(): Express {
       return;
     }
 
-    const record: InquiryRecord = {
-      id: `INQ-${new Date().getFullYear()}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`,
-      name: trimmedName,
-      email: trimmedEmail,
-      ...(phoneCheck.e164 ? { phone: phoneCheck.e164 } : {}),
-      company: trimmedCompany || (consultationInbox ? '' : 'Independent'),
-      tier,
-      serviceDomain,
-      timeline: trimmedTimeline,
-      message: trimmedMessage,
-      status: 'New',
-      createdAt: new Date().toISOString(),
-    };
-
     const key = req.body?.submissionKey;
-    if (key !== undefined && (typeof key !== 'string' || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(key))) {
+    if (
+      key !== undefined &&
+      (typeof key !== 'string' ||
+        !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(key))
+    ) {
       res.status(400).json({ error: 'Invalid submission reference.' });
       return;
     }
+
+    const submissionKey = key ?? crypto.randomUUID();
+    const repo = getCaseRepository();
+
     try {
-      if (consultationInbox) {
-        const inquiry = await consultationInbox.save(record, key ?? crypto.randomUUID());
-        if (!inquiry) {
-          res.status(409).json({ error: 'The submission reference is already in use. Please try again.' });
-          return;
-        }
-        console.info('Consultation inquiry recorded', {
-          inquiryId: inquiry.id,
-          httpStatus: 201,
-          stage: 'database_save',
-          storage: 'postgres',
-          deduplicated: inquiry.id !== record.id,
+      const outcome = await repo.createCase(
+        {
+          name: trimmedName,
+          email: trimmedEmail,
+          phoneCountryCode: phoneCheck.country ?? rawCountry ?? null,
+          ...(phoneCheck.e164 ? { phone: phoneCheck.e164 } : {}),
+          company: trimmedCompany || (repo.storageMode === 'postgres' ? '' : 'Independent'),
+          tier,
+          serviceDomain,
+          timeline: trimmedTimeline as TargetTimelineValue,
+          message: trimmedMessage,
+        },
+        submissionKey
+      );
+
+      if ('conflict' in outcome) {
+        res.status(409).json({
+          error: 'The submission reference is already in use for a different request. Please try again.',
         });
-        res.status(201).json({ inquiry });
         return;
       }
-      if (process.env.RAILWAY_ENVIRONMENT_NAME === 'production') {
-        console.error('Consultation storage is missing its production database connection.');
-        res.status(503).json({ error: 'We could not save your request. Please try again.' });
-        return;
+
+      if (!outcome.deduplicated && consultationInbox) {
+        try {
+          await consultationInbox.save(outcome.caseRecord, submissionKey);
+        } catch {
+          console.warn('Email notification queue deferred; case remains safely persisted', {
+            caseNumber: outcome.caseRecord.caseNumber,
+            inquiryId: outcome.caseRecord.id,
+          });
+        }
       }
-      const store = structuredClone(ensureStore());
-      store.inquiries.unshift(record);
-      saveStore(store);
-      console.info('Consultation inquiry recorded', {
-        inquiryId: record.id,
+
+      console.info('Consultation case recorded', {
+        caseNumber: outcome.caseRecord.caseNumber,
+        inquiryId: outcome.caseRecord.id,
         httpStatus: 201,
-        stage: 'file_save',
-        storage: 'file',
-        deduplicated: false,
+        storage: repo.storageMode,
+        deduplicated: outcome.deduplicated,
       });
-      res.status(201).json({ inquiry: record });
+
+      res.status(201).json({
+        inquiry: outcome.caseRecord,
+        caseRecord: outcome.caseRecord,
+        deduplicated: outcome.deduplicated,
+      });
     } catch {
-      console.error('Consultation storage failed', {
-        inquiryId: record.id,
-        httpStatus: 503,
-        stage: 'database_save',
-      });
+      console.error('Consultation storage failed', { httpStatus: 503 });
       res.status(503).json({ error: 'We could not save your request. Please try again.' });
     }
   });
 
+  // -------------------------------------------------------------------------
+  // Gemini AI Service Advisor
+  // -------------------------------------------------------------------------
   const aiLimiter = createRateLimiter('assistant', 20, 5 * 60 * 1000);
   app.post('/api/assistant', aiLimiter, async (req, res) => {
     try {
@@ -680,7 +774,7 @@ export function createApiApp(): Express {
                 },
                 recommendedTimeline: {
                   type: Type.STRING,
-                  description: "Suggested engagement timeline, e.g. 'Within 30 days' or '2–4 Weeks'",
+                  description: "Suggested engagement timeline, e.g. 'Within 30 days'",
                 },
                 executiveSummary: {
                   type: Type.STRING,
@@ -715,130 +809,672 @@ export function createApiApp(): Express {
     }
   });
 
-  app.post('/api/admin/login', (req, res) => {
-    const expected = process.env.ADMIN_PASSCODE?.trim();
-    if (!expected) {
+  // -------------------------------------------------------------------------
+  // Authentication & Bootstrap (Email/Password + Server Passcode Fallback)
+  // -------------------------------------------------------------------------
+  app.get('/api/auth/status', async (_req, res) => {
+    const repo = getCaseRepository();
+    const hasAdminUsers = await repo.hasAnyAdminUser();
+    const bootstrapSecret = (process.env.ADMIN_BOOTSTRAP_TOKEN || process.env.ADMIN_PASSCODE || '').trim();
+    const mailerConfig = getConsultationMailerConfig();
+    res.json({
+      hasAdminUsers,
+      bootstrapConfigured: Boolean(bootstrapSecret),
+      passcodeConfigured: Boolean(process.env.ADMIN_PASSCODE?.trim()),
+      storageMode: repo.storageMode,
+      mailerConfigured: Boolean(mailerConfig),
+    });
+  });
+
+  app.get('/api/auth/me', requireAuth, (req: AuthenticatedRequest, res) => {
+    const s = req.authSession!;
+    res.json({
+      user: {
+        id: s.userId,
+        email: s.email,
+        name: s.name,
+        role: s.role,
+      },
+      csrfToken: s.csrfToken,
+    });
+  });
+
+  app.post('/api/auth/bootstrap', async (req, res) => {
+    const repo = getCaseRepository();
+    const hasAdmin = await repo.hasAnyAdminUser();
+    if (hasAdmin) {
+      res.status(409).json({ error: 'An administrator account already exists. Please sign in.' });
+      return;
+    }
+
+    const expectedSecret = (
+      process.env.ADMIN_BOOTSTRAP_TOKEN ||
+      process.env.ADMIN_PASSCODE ||
+      ''
+    ).trim();
+    if (!expectedSecret) {
       res.status(503).json({
-        error: 'Administrator authentication is not configured on this server. Set ADMIN_PASSCODE in server environment variables.',
+        error:
+          'First-admin bootstrap is not configured. Set ADMIN_BOOTSTRAP_TOKEN or ADMIN_PASSCODE on the server.',
       });
       return;
     }
 
     const ip = getClientIp(req);
-    const now = Date.now();
-    const record = loginFailureBuckets.get(ip);
-    if (record && record.lockedUntil > now) {
-      const waitSec = Math.max(1, Math.ceil((record.lockedUntil - now) / 1000));
-      res.setHeader('Retry-After', String(waitSec));
-      res.status(429).json({
-        error: `Too many failed login attempts. Try again in ${waitSec} seconds.`,
+    if (checkLoginLockout(ip, res)) return;
+
+    const { bootstrapToken, email, name, password } = req.body ?? {};
+    const suppliedToken = typeof bootstrapToken === 'string' ? bootstrapToken.trim() : '';
+    if (!suppliedToken || !timingSafeMatch(suppliedToken, expectedSecret)) {
+      recordLoginFailure(ip);
+      res.status(401).json({ error: 'Invalid bootstrap verification token.' });
+      return;
+    }
+
+    const cleanEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
+    const cleanName = typeof name === 'string' ? name.trim() : '';
+    const cleanPassword = typeof password === 'string' ? password : '';
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      res.status(400).json({ error: 'Please enter a valid administrator email address.' });
+      return;
+    }
+    if (cleanName.length < 2 || cleanName.length > 80) {
+      res.status(400).json({ error: 'Administrator name must be between 2 and 80 characters.' });
+      return;
+    }
+    if (cleanPassword.length < 12) {
+      res.status(400).json({ error: 'Password must be at least 12 characters long.' });
+      return;
+    }
+
+    try {
+      const created = await repo.createUser({
+        email: cleanEmail,
+        name: cleanName,
+        password: cleanPassword,
+        role: 'admin',
+      });
+      await repo.recordUserLogin(created.id);
+      const actor: CaseActor = {
+        id: created.id,
+        email: created.email,
+        name: created.name,
+        role: 'admin',
+      };
+      await repo.recordGlobalActivity(actor, 'admin_bootstrapped', { email: created.email });
+      loginFailureBuckets.delete(ip);
+
+      const session = createSession(actor);
+      setSessionCookies(req, res, session);
+      res.status(201).json({
+        token: session.token,
+        csrfToken: session.csrfToken,
+        expiresInMs: ADMIN_TOKEN_TTL_MS,
+        user: {
+          id: created.id,
+          email: created.email,
+          name: created.name,
+          role: created.role,
+        },
+      });
+    } catch {
+      res.status(409).json({ error: 'Unable to create administrator account.' });
+    }
+  });
+
+  app.post('/api/auth/login', async (req, res) => {
+    const ip = getClientIp(req);
+    if (checkLoginLockout(ip, res)) return;
+
+    const { email, password } = req.body ?? {};
+    const cleanEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
+    const cleanPassword = typeof password === 'string' ? password : '';
+
+    if (!cleanEmail || !cleanPassword) {
+      res.status(400).json({ error: 'Email and password are required.' });
+      return;
+    }
+
+    const repo = getCaseRepository();
+    const user = await repo.getUserByEmail(cleanEmail);
+    if (!user || !user.isActive || !verifyPassword(cleanPassword, user.passwordHash)) {
+      recordLoginFailure(ip);
+      res.status(401).json({ error: 'Invalid email or password.' });
+      return;
+    }
+
+    loginFailureBuckets.delete(ip);
+    await repo.recordUserLogin(user.id);
+    const session = createSession({
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      role: user.role,
+    });
+    setSessionCookies(req, res, session);
+    res.json({
+      token: session.token,
+      csrfToken: session.csrfToken,
+      expiresInMs: ADMIN_TOKEN_TTL_MS,
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+      },
+    });
+  });
+
+  app.post('/api/admin/login', (req, res) => {
+    const expected = process.env.ADMIN_PASSCODE?.trim();
+    if (!expected) {
+      res.status(503).json({
+        error:
+          'Administrator authentication is not configured on this server. Set ADMIN_PASSCODE in server environment variables.',
       });
       return;
     }
+
+    const ip = getClientIp(req);
+    if (checkLoginLockout(ip, res)) return;
 
     const { passcode } = req.body ?? {};
     const supplied = typeof passcode === 'string' ? passcode.trim() : '';
 
     if (!supplied || !timingSafeMatch(supplied, expected)) {
-      const current =
-        record && now <= record.resetAt
-          ? record
-          : { failures: 0, lockedUntil: 0, resetAt: now + 15 * 60 * 1000 };
-      current.failures += 1;
-      if (current.failures >= 5) {
-        current.lockedUntil = now + 15 * 60 * 1000;
-      }
-      loginFailureBuckets.set(ip, current);
+      recordLoginFailure(ip);
       res.status(401).json({ error: 'Invalid executive passcode.' });
       return;
     }
 
     loginFailureBuckets.delete(ip);
-    pruneExpiredTokens();
-    const token = crypto.randomBytes(32).toString('hex');
-    activeAdminTokens.set(token, Date.now() + ADMIN_TOKEN_TTL_MS);
-    res.json({ token, expiresInMs: ADMIN_TOKEN_TTL_MS });
+    const session = createSession({
+      id: null,
+      email: 'executive-admin',
+      name: 'Executive Admin',
+      role: 'admin',
+    });
+    setSessionCookies(req, res, session);
+    res.json({
+      token: session.token,
+      csrfToken: session.csrfToken,
+      expiresInMs: ADMIN_TOKEN_TTL_MS,
+      user: {
+        id: null,
+        email: session.email,
+        name: session.name,
+        role: session.role,
+      },
+    });
   });
 
-  app.post('/api/admin/logout', requireAdmin, (req, res) => {
-    const header = req.headers.authorization || '';
-    const token = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
-    if (token) {
-      activeAdminTokens.delete(token);
+  const handleLogout = (req: AuthenticatedRequest, res: Response) => {
+    const { session } = extractSessionFromRequest(req);
+    if (session) {
+      activeSessions.delete(session.token);
+    }
+    clearSessionCookies(req, res);
+    res.json({ ok: true });
+  };
+  app.post('/api/admin/logout', requireAuth, handleLogout);
+  app.post('/api/auth/logout', requireAuth, handleLogout);
+
+  // -------------------------------------------------------------------------
+  // Case Management API (Authenticated Admin & Staff)
+  // -------------------------------------------------------------------------
+  app.get('/api/admin/cases', requireAuth, async (req, res) => {
+    const repo = getCaseRepository();
+    const statusRaw = typeof req.query.status === 'string' ? req.query.status : 'All';
+    const normalizedStatus =
+      statusRaw === 'All' ? 'All' : normalizeStatusInput(statusRaw) || 'All';
+
+    const filters: CaseQueryFilters = {
+      search: typeof req.query.search === 'string' ? req.query.search : undefined,
+      status: normalizedStatus,
+      serviceDomain:
+        typeof req.query.serviceDomain === 'string' &&
+        (req.query.serviceDomain === 'All' ||
+          VALID_SERVICES.includes(req.query.serviceDomain as ServiceDomainId))
+          ? (req.query.serviceDomain as ServiceDomainId | 'All')
+          : 'All',
+      timeline:
+        typeof req.query.timeline === 'string' &&
+        (req.query.timeline === 'All' || VALID_TIMELINES.includes(req.query.timeline))
+          ? (req.query.timeline as TargetTimelineValue | 'All')
+          : 'All',
+      assignedTo: typeof req.query.assignedTo === 'string' ? req.query.assignedTo : 'All',
+      fromIso: typeof req.query.from === 'string' ? req.query.from : undefined,
+      toIso: typeof req.query.to === 'string' ? req.query.to : undefined,
+      sortBy:
+        typeof req.query.sortBy === 'string' &&
+        ['submittedAt', 'updatedAt', 'followUpAt', 'caseNumber', 'status'].includes(req.query.sortBy)
+          ? (req.query.sortBy as CaseQueryFilters['sortBy'])
+          : 'submittedAt',
+      sortDir: req.query.sortDir === 'asc' ? 'asc' : 'desc',
+      page: Number(req.query.page) || 1,
+      pageSize: Number(req.query.pageSize) || 20,
+    };
+
+    try {
+      const result = await repo.listCases(filters);
+      res.json(result);
+    } catch {
+      res.status(503).json({ error: 'Unable to load consultation cases.' });
+    }
+  });
+
+  app.get('/api/admin/cases/:id', requireAuth, async (req, res) => {
+    const repo = getCaseRepository();
+    try {
+      const detail = await repo.getCaseDetail(req.params.id);
+      if (!detail) {
+        res.status(404).json({ error: 'Case not found.' });
+        return;
+      }
+      res.json(detail);
+    } catch {
+      res.status(503).json({ error: 'Unable to load case details.' });
+    }
+  });
+
+  const handleUpdateCase = async (req: AuthenticatedRequest, res: Response) => {
+    const repo = getCaseRepository();
+    const {
+      status,
+      statusNote,
+      priority,
+      assignedTo,
+      followUpAt,
+      deadlineAt,
+      company,
+      tier,
+      serviceDomain,
+      timeline,
+      notes,
+    } = req.body ?? {};
+
+    const updates: CaseUpdateInput = {};
+
+    if (status !== undefined) {
+      const normalized = normalizeStatusInput(status);
+      if (!normalized || !CASE_STATUSES.includes(normalized)) {
+        res.status(400).json({ error: 'Invalid case status value.' });
+        return;
+      }
+      updates.status = normalized;
+    }
+
+    if (statusNote !== undefined) {
+      if (typeof statusNote !== 'string' || statusNote.length > 500) {
+        res.status(400).json({ error: 'Status note must be 500 characters or fewer.' });
+        return;
+      }
+      updates.statusNote = statusNote.trim();
+    }
+
+    if (priority !== undefined) {
+      if (!VALID_PRIORITIES.includes(priority)) {
+        res.status(400).json({ error: 'Invalid case priority value.' });
+        return;
+      }
+      updates.priority = priority;
+    }
+
+    if (assignedTo !== undefined) {
+      if (assignedTo !== null && typeof assignedTo !== 'string') {
+        res.status(400).json({ error: 'Invalid assignee identifier.' });
+        return;
+      }
+      if (typeof assignedTo === 'string' && assignedTo.length > 0) {
+        const user = await repo.getUserById(assignedTo);
+        if (!user || !user.isActive) {
+          res.status(400).json({ error: 'Assigned owner must be an active team user.' });
+          return;
+        }
+        updates.assignedTo = user.id;
+      } else {
+        updates.assignedTo = null;
+      }
+    }
+
+    if (followUpAt !== undefined) {
+      if (followUpAt !== null && (typeof followUpAt !== 'string' || Number.isNaN(Date.parse(followUpAt)))) {
+        res.status(400).json({ error: 'Follow-up date must be a valid ISO timestamp or null.' });
+        return;
+      }
+      updates.followUpAt = followUpAt ? new Date(followUpAt).toISOString() : null;
+    }
+
+    if (deadlineAt !== undefined) {
+      if (deadlineAt !== null && (typeof deadlineAt !== 'string' || Number.isNaN(Date.parse(deadlineAt)))) {
+        res.status(400).json({ error: 'Deadline date must be a valid ISO timestamp or null.' });
+        return;
+      }
+      updates.deadlineAt = deadlineAt ? new Date(deadlineAt).toISOString() : null;
+    }
+
+    if (company !== undefined) {
+      if (typeof company !== 'string' || company.length > 120) {
+        res.status(400).json({ error: 'Organization name must be 120 characters or fewer.' });
+        return;
+      }
+      updates.company = company.trim();
+    }
+
+    if (tier !== undefined) {
+      if (!VALID_TIERS.includes(tier)) {
+        res.status(400).json({ error: 'Invalid organization tier.' });
+        return;
+      }
+      updates.tier = tier;
+    }
+
+    if (serviceDomain !== undefined) {
+      if (!VALID_SERVICES.includes(serviceDomain)) {
+        res.status(400).json({ error: 'Invalid service domain.' });
+        return;
+      }
+      updates.serviceDomain = serviceDomain;
+    }
+
+    if (timeline !== undefined) {
+      if (!VALID_TIMELINES.includes(timeline)) {
+        res.status(400).json({ error: 'Invalid target timeline.' });
+        return;
+      }
+      updates.timeline = timeline;
+    }
+
+    if (notes !== undefined) {
+      if (typeof notes !== 'string' || notes.length > 2000) {
+        res.status(400).json({ error: 'Notes must be a string of 2000 characters or fewer.' });
+        return;
+      }
+      updates.notes = notes.trim();
+    }
+
+    try {
+      const updated = await repo.updateCase(
+        req.params.id,
+        updates,
+        sessionToActor(req.authSession!)
+      );
+      if (!updated) {
+        res.status(404).json({ error: 'Case not found.' });
+        return;
+      }
+      console.info('Consultation case updated', {
+        caseNumber: updated.caseNumber,
+        inquiryId: updated.id,
+        httpStatus: 200,
+        status: updated.status,
+      });
+      res.json({ inquiry: updated, caseRecord: updated });
+    } catch {
+      res.status(503).json({ error: 'The case could not be updated. Please try again.' });
+    }
+  };
+
+  app.patch('/api/admin/cases/:id', requireAuth, handleUpdateCase);
+  app.patch('/api/admin/inquiries/:id', requireAuth, handleUpdateCase);
+
+  app.post('/api/admin/cases/:id/notes', requireAuth, async (req: AuthenticatedRequest, res) => {
+    const content = typeof req.body?.content === 'string' ? req.body.content.trim() : '';
+    if (content.length < 1 || content.length > 2000) {
+      res.status(400).json({ error: 'Internal note must be between 1 and 2000 characters.' });
+      return;
+    }
+    try {
+      const repo = getCaseRepository();
+      const note = await repo.addCaseNote(req.params.id, content, sessionToActor(req.authSession!));
+      if (!note) {
+        res.status(404).json({ error: 'Case not found.' });
+        return;
+      }
+      res.status(201).json({ note });
+    } catch {
+      res.status(503).json({ error: 'Unable to save internal note.' });
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // Analytics & Reports
+  // -------------------------------------------------------------------------
+  app.get('/api/admin/analytics', requireAuth, async (req, res) => {
+    const repo = getCaseRepository();
+    const fromIso = typeof req.query.from === 'string' ? req.query.from : undefined;
+    const toIso = typeof req.query.to === 'string' ? req.query.to : undefined;
+    const comparePrevious = req.query.comparePrevious === 'true';
+
+    try {
+      const allCases = await repo.getAllCases();
+      const analytics = computeDashboardAnalytics(allCases, {
+        fromIso,
+        toIso,
+        comparePrevious,
+      });
+      res.json(analytics);
+    } catch {
+      res.status(503).json({ error: 'Unable to compute analytics.' });
+    }
+  });
+
+  app.get('/api/admin/reports/export', requireAuth, requireAdminRole, async (req: AuthenticatedRequest, res) => {
+    const repo = getCaseRepository();
+    const statusRaw = typeof req.query.status === 'string' ? req.query.status : 'All';
+    const normalizedStatus =
+      statusRaw === 'All' ? 'All' : normalizeStatusInput(statusRaw) || 'All';
+
+    const filters: CaseQueryFilters = {
+      search: typeof req.query.search === 'string' ? req.query.search : undefined,
+      status: normalizedStatus,
+      serviceDomain:
+        typeof req.query.serviceDomain === 'string' &&
+        (req.query.serviceDomain === 'All' ||
+          VALID_SERVICES.includes(req.query.serviceDomain as ServiceDomainId))
+          ? (req.query.serviceDomain as ServiceDomainId | 'All')
+          : 'All',
+      timeline:
+        typeof req.query.timeline === 'string' &&
+        (req.query.timeline === 'All' || VALID_TIMELINES.includes(req.query.timeline))
+          ? (req.query.timeline as TargetTimelineValue | 'All')
+          : 'All',
+      fromIso: typeof req.query.from === 'string' ? req.query.from : undefined,
+      toIso: typeof req.query.to === 'string' ? req.query.to : undefined,
+      page: 1,
+      pageSize: 10000,
+    };
+
+    try {
+      const list = await repo.listCases(filters);
+      const analytics = computeDashboardAnalytics(list.items);
+      const csv = buildCasesCsvReport(list.items, analytics);
+
+      await repo.recordGlobalActivity(sessionToActor(req.authSession!), 'report_exported_csv', {
+        rowCount: list.items.length,
+        status: filters.status,
+        serviceDomain: filters.serviceDomain,
+        timeline: filters.timeline,
+      });
+
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', 'attachment; filename="consultation-cases-report.csv"');
+      res.send(csv);
+    } catch {
+      res.status(503).json({ error: 'Unable to export CSV report.' });
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // Notifications & Global Activity Log
+  // -------------------------------------------------------------------------
+  app.get('/api/admin/notifications', requireAuth, async (req: AuthenticatedRequest, res) => {
+    const repo = getCaseRepository();
+    try {
+      const items = await repo.listNotifications(req.authSession!.userId);
+      const unreadCount = items.filter((n) => !n.readAt).length;
+      res.json({ notifications: items, unreadCount });
+    } catch {
+      res.status(503).json({ error: 'Unable to load notifications.' });
+    }
+  });
+
+  app.patch('/api/admin/notifications/:id/read', requireAuth, async (req, res) => {
+    const repo = getCaseRepository();
+    const ok = await repo.markNotificationRead(req.params.id);
+    if (!ok) {
+      res.status(404).json({ error: 'Notification not found.' });
+      return;
     }
     res.json({ ok: true });
   });
 
-  app.get('/api/admin/dashboard', requireAdmin, async (_req, res) => {
+  app.post('/api/admin/notifications/read-all', requireAuth, async (req: AuthenticatedRequest, res) => {
+    const repo = getCaseRepository();
+    await repo.markAllNotificationsRead(req.authSession!.userId);
+    res.json({ ok: true });
+  });
+
+  app.get('/api/admin/activity', requireAuth, async (req, res) => {
+    const repo = getCaseRepository();
+    const limit = Number(req.query.limit) || 100;
     try {
-      const store = ensureStore();
-      const records = consultationInbox ? await consultationInbox.list() : [];
-      const ids = new Set(records.map((record) => record.id));
+      const items = await repo.listActivity(limit);
+      res.json({ activity: items });
+    } catch {
+      res.status(503).json({ error: 'Unable to load activity log.' });
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // Team & Access Management (RBAC: Admin Only for Mutations)
+  // -------------------------------------------------------------------------
+  app.get('/api/admin/users', requireAuth, async (_req, res) => {
+    const repo = getCaseRepository();
+    try {
+      const users = await repo.listUsers();
+      res.json({ users });
+    } catch {
+      res.status(503).json({ error: 'Unable to load team users.' });
+    }
+  });
+
+  app.post('/api/admin/users', requireAuth, requireAdminRole, async (req: AuthenticatedRequest, res) => {
+    const { email, name, role, password } = req.body ?? {};
+    const cleanEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
+    const cleanName = typeof name === 'string' ? name.trim() : '';
+    const cleanRole: AdminRole = role === 'admin' ? 'admin' : role === 'staff' ? 'staff' : 'staff';
+    const cleanPassword = typeof password === 'string' ? password : '';
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      res.status(400).json({ error: 'Valid user email is required.' });
+      return;
+    }
+    if (cleanName.length < 2 || cleanName.length > 80) {
+      res.status(400).json({ error: 'User name must be between 2 and 80 characters.' });
+      return;
+    }
+    if (role !== 'admin' && role !== 'staff') {
+      res.status(400).json({ error: 'Role must be admin or staff.' });
+      return;
+    }
+    if (cleanPassword.length < 10) {
+      res.status(400).json({ error: 'Password must be at least 10 characters.' });
+      return;
+    }
+
+    try {
+      const repo = getCaseRepository();
+      const created = await repo.createUser({
+        email: cleanEmail,
+        name: cleanName,
+        role: cleanRole,
+        password: cleanPassword,
+      });
+      await repo.recordGlobalActivity(sessionToActor(req.authSession!), 'user_created', {
+        email: created.email,
+        role: created.role,
+      });
+      res.status(201).json({ user: created });
+    } catch {
+      res.status(409).json({ error: 'A user with that email already exists.' });
+    }
+  });
+
+  app.patch('/api/admin/users/:id', requireAuth, requireAdminRole, async (req: AuthenticatedRequest, res) => {
+    const { role, isActive, name } = req.body ?? {};
+    const changes: { role?: AdminRole; isActive?: boolean; name?: string } = {};
+    if (role !== undefined) {
+      if (role !== 'admin' && role !== 'staff') {
+        res.status(400).json({ error: 'Role must be admin or staff.' });
+        return;
+      }
+      changes.role = role;
+    }
+    if (isActive !== undefined) {
+      if (typeof isActive !== 'boolean') {
+        res.status(400).json({ error: 'isActive must be a boolean.' });
+        return;
+      }
+      changes.isActive = isActive;
+    }
+    if (name !== undefined) {
+      if (typeof name !== 'string' || name.trim().length < 2 || name.trim().length > 80) {
+        res.status(400).json({ error: 'Name must be between 2 and 80 characters.' });
+        return;
+      }
+      changes.name = name.trim();
+    }
+
+    const repo = getCaseRepository();
+    const updated = await repo.updateUser(req.params.id, changes);
+    if (!updated) {
+      res.status(404).json({ error: 'User not found.' });
+      return;
+    }
+    await repo.recordGlobalActivity(sessionToActor(req.authSession!), 'user_updated', {
+      targetUserId: updated.id,
+      role: updated.role,
+      isActive: updated.isActive,
+    });
+    res.json({ user: updated });
+  });
+
+  // -------------------------------------------------------------------------
+  // Legacy Dashboard & Portfolio / Brand Endpoints (Preserved + RBAC hardened)
+  // -------------------------------------------------------------------------
+  app.get('/api/admin/dashboard', requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const repo = getCaseRepository();
+      const [cases, content, notifications, users] = await Promise.all([
+        repo.getAllCases(),
+        repo.getSiteContent(),
+        repo.listNotifications(req.authSession!.userId),
+        repo.listUsers(),
+      ]);
+      const analytics = computeDashboardAnalytics(cases);
       res.json({
-        inquiries: [...records, ...store.inquiries.filter((record) => !ids.has(record.id))],
-        projects: store.projects,
-        brand: store.brand,
+        inquiries: cases,
+        cases,
+        projects: content.projects,
+        brand: content.brand,
+        analytics,
+        users,
+        unreadNotifications: notifications.filter((n) => !n.readAt).length,
+        currentUser: {
+          id: req.authSession!.userId,
+          email: req.authSession!.email,
+          name: req.authSession!.name,
+          role: req.authSession!.role,
+        },
       });
     } catch {
       res.status(503).json({ error: 'The inquiry inbox is temporarily unavailable.' });
     }
   });
 
-  app.patch('/api/admin/inquiries/:id', requireAdmin, async (req, res) => {
-    const { status, notes } = req.body ?? {};
-    const changes: Partial<InquiryRecord> = {};
-    if (status !== undefined) {
-      if (!VALID_STATUSES.includes(status)) {
-        res.status(400).json({ error: 'Invalid inquiry status value.' });
-        return;
-      }
-      changes.status = status;
-    }
-    if (notes !== undefined) {
-      if (typeof notes !== 'string' || notes.length > 1000) {
-        res.status(400).json({ error: 'Notes must be a string of 1000 characters or fewer.' });
-        return;
-      }
-      changes.notes = notes.trim();
-    }
-    try {
-      const saved = consultationInbox && await consultationInbox.update(req.params.id, changes);
-      if (saved) {
-        console.info('Consultation inquiry updated', {
-          inquiryId: saved.id,
-          httpStatus: 200,
-          stage: 'admin_update',
-          status: saved.status,
-        });
-        res.json({ inquiry: saved });
-        return;
-      }
-      const store = structuredClone(ensureStore());
-      const target = store.inquiries.find((item) => item.id === req.params.id);
-      if (!target) {
-        res.status(404).json({ error: 'Inquiry not found.' });
-        return;
-      }
-      Object.assign(target, changes);
-      saveStore(store);
-      console.info('Consultation inquiry updated', {
-        inquiryId: target.id,
-        httpStatus: 200,
-        stage: 'admin_update',
-        status: target.status,
-      });
-      res.json({ inquiry: target });
-    } catch {
-      console.error('Consultation inquiry update failed', {
-        inquiryId: req.params.id,
-        httpStatus: 503,
-        stage: 'admin_update',
-      });
-      res.status(503).json({ error: 'The inquiry could not be updated. Please try again.' });
-    }
-  });
-
-  app.post('/api/admin/projects', requireAdmin, (req, res) => {
+  app.post('/api/admin/projects', requireAuth, requireAdminRole, async (req: AuthenticatedRequest, res) => {
     const { title, domain, tier, timeframe, metricValue, metricLabel, summary, architecture } =
       req.body ?? {};
     const trimmedTitle = typeof title === 'string' ? title.trim() : '';
@@ -858,7 +1494,8 @@ export function createApiApp(): Express {
       return;
     }
 
-    const store = ensureStore();
+    const repo = getCaseRepository();
+    const content = await repo.getSiteContent();
     const newProject: ProjectCase = {
       id: `proj-${crypto.randomUUID().slice(0, 8)}`,
       title: trimmedTitle,
@@ -876,25 +1513,31 @@ export function createApiApp(): Express {
         : ['Structured operational framework', 'Automated reporting baseline'],
       imageUrl: WORKFLOW_VISUAL_URL,
     };
-    store.projects.unshift(newProject);
-    saveStore(store);
-    res.status(201).json({ project: newProject, projects: store.projects });
+    const nextProjects = [newProject, ...content.projects];
+    await repo.saveSiteContent({ projects: nextProjects });
+    await repo.recordGlobalActivity(sessionToActor(req.authSession!), 'project_created', {
+      projectId: newProject.id,
+      title: newProject.title,
+    });
+    res.status(201).json({ project: newProject, projects: nextProjects });
   });
 
-  app.delete('/api/admin/projects/:id', requireAdmin, (req, res) => {
-    const { id } = req.params;
-    const store = ensureStore();
-    const next = store.projects.filter((p) => p.id !== id);
-    if (next.length === store.projects.length) {
+  app.delete('/api/admin/projects/:id', requireAuth, requireAdminRole, async (req: AuthenticatedRequest, res) => {
+    const repo = getCaseRepository();
+    const content = await repo.getSiteContent();
+    const next = content.projects.filter((p) => p.id !== req.params.id);
+    if (next.length === content.projects.length) {
       res.status(404).json({ error: 'Project not found.' });
       return;
     }
-    store.projects = next;
-    saveStore(store);
-    res.json({ projects: store.projects });
+    await repo.saveSiteContent({ projects: next });
+    await repo.recordGlobalActivity(sessionToActor(req.authSession!), 'project_deleted', {
+      projectId: req.params.id,
+    });
+    res.json({ projects: next });
   });
 
-  app.post('/api/admin/brand', requireAdmin, (req, res) => {
+  app.post('/api/admin/brand', requireAuth, requireAdminRole, async (req: AuthenticatedRequest, res) => {
     const { customLogoDataUrl, motionEnabled, motionSensitivity } = req.body ?? {};
     if (customLogoDataUrl !== undefined) {
       const check = validateRasterDataUrl(customLogoDataUrl);
@@ -904,21 +1547,22 @@ export function createApiApp(): Express {
       }
     }
 
-    const store = ensureStore();
-    store.brand = {
-      // Preserve static original portrait policy
+    const repo = getCaseRepository();
+    const content = await repo.getSiteContent();
+    const nextBrand = {
       customPortraitDataUrl: null,
       customLogoDataUrl:
-        customLogoDataUrl === undefined ? store.brand.customLogoDataUrl : customLogoDataUrl,
+        customLogoDataUrl === undefined ? content.brand.customLogoDataUrl : customLogoDataUrl,
       motionEnabled:
-        typeof motionEnabled === 'boolean' ? motionEnabled : store.brand.motionEnabled,
+        typeof motionEnabled === 'boolean' ? motionEnabled : content.brand.motionEnabled,
       motionSensitivity:
         typeof motionSensitivity === 'number'
           ? Math.min(2, Math.max(0, motionSensitivity))
-          : store.brand.motionSensitivity,
+          : content.brand.motionSensitivity,
     };
-    saveStore(store);
-    res.json({ brand: store.brand });
+    await repo.saveSiteContent({ brand: nextBrand });
+    await repo.recordGlobalActivity(sessionToActor(req.authSession!), 'brand_updated', {});
+    res.json({ brand: nextBrand });
   });
 
   return app;

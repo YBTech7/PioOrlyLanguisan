@@ -95,7 +95,15 @@ export function openInbox(url: string) {
 }
 
 const databaseUrl = process.env.CONSULTATION_DATABASE_URL;
-export const consultationInbox = databaseUrl ? openInbox(databaseUrl) : null;
+let consultationInbox: ReturnType<typeof openInbox> | null = null;
+if (databaseUrl) {
+  try {
+    consultationInbox = openInbox(databaseUrl);
+  } catch {
+    console.warn('PostgreSQL not connected — file/memory store active');
+  }
+}
+export { consultationInbox };
 
 const tiers = { individual: 'Individual', startup: 'Startup', smb: 'Small or medium business', enterprise: 'Enterprise' };
 const services = {
@@ -113,6 +121,7 @@ export function formatConsultationEmailBody(inquiry: InquiryRecord): string {
       ? inquiry.phone.trim()
       : 'Not provided';
   return [
+    ...(inquiry.caseNumber ? ['Case Reference: ' + inquiry.caseNumber] : []),
     'Tracking ID: ' + inquiry.id,
     'Submitted (UTC): ' + inquiry.createdAt,
     '',

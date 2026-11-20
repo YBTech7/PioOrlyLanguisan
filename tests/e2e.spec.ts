@@ -286,11 +286,40 @@ test.describe('Pio Languisan Portfolio Platform E2E', () => {
         body: JSON.stringify({
           inquiry: {
             id: 'INQ-2026-TEST1234',
+            caseNumber: 'CASE-000001',
             ...payload,
             status: 'New',
+            priority: 'Normal',
+            assignedTo: null,
+            followUpAt: null,
+            deadlineAt: null,
             createdAt: '2026-11-17T12:00:00.000Z',
+            updatedAt: '2026-11-17T12:00:00.000Z',
+            version: 1,
           },
         }),
+      });
+    });
+
+    await page.route('**/api/auth/status', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          hasAdminUsers: false,
+          bootstrapConfigured: true,
+          passcodeConfigured: true,
+          storageMode: 'file',
+          mailerConfigured: false,
+        }),
+      });
+    });
+
+    await page.route('**/api/auth/me', async (route) => {
+      await route.fulfill({
+        status: 401,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: 'Authentication required.' }),
       });
     });
 
@@ -298,50 +327,112 @@ test.describe('Pio Languisan Portfolio Platform E2E', () => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({ token: 'e2e-admin-token', expiresInMs: 3600000 }),
+        body: JSON.stringify({
+          token: 'e2e-admin-token',
+          expiresInMs: 3600000,
+          user: { id: null, email: 'executive-admin', name: 'Executive Admin', role: 'admin' },
+        }),
       });
     });
+
+    const mockCases = [
+      {
+        id: 'INQ-2026-SENT01',
+        caseNumber: 'CASE-000001',
+        name: 'Jordan Taylor',
+        email: 'jordan@acme-ops.example',
+        phone: '+639171234567',
+        phoneCountryCode: 'PH',
+        company: 'Acme Ops',
+        tier: 'smb',
+        serviceDomain: 'data-analytics',
+        timeline: 'Within 30 days',
+        message: 'Need cleaner SLA reporting.',
+        status: 'New',
+        priority: 'Normal',
+        assignedTo: null,
+        followUpAt: null,
+        deadlineAt: null,
+        createdAt: '2026-11-18T10:00:00.000Z',
+        updatedAt: '2026-11-18T10:00:00.000Z',
+        version: 1,
+        emailStatus: 'sent',
+        emailAttempts: 1,
+        providerMessageId: '193a8f10ab',
+        lastEmailHttpStatus: 200,
+        lastEmailStage: 'gmail_accepted',
+      },
+      {
+        id: 'INQ-2026-QUEUED02',
+        caseNumber: 'CASE-000002',
+        name: 'Riley Chen',
+        email: 'riley@startup.example',
+        company: '',
+        tier: 'startup',
+        serviceDomain: 'technical-support',
+        timeline: 'Immediate (1–2 weeks)',
+        message: 'Support queue triage setup.',
+        status: 'New',
+        priority: 'Normal',
+        assignedTo: null,
+        followUpAt: null,
+        deadlineAt: null,
+        createdAt: '2026-11-18T09:00:00.000Z',
+        updatedAt: '2026-11-18T09:00:00.000Z',
+        version: 1,
+        emailStatus: 'pending',
+        emailAttempts: 0,
+      },
+    ];
+
+    const mockAnalytics = {
+      kpis: {
+        totalRequests: 2,
+        newRequests: 2,
+        pendingRequests: 0,
+        followUpRequests: 0,
+        completedRequests: 0,
+        overdueCases: 0,
+        dueSoonCases: 0,
+        completionRate: 0,
+      },
+      previousKpis: null,
+      byStatus: [
+        { key: 'New', label: 'New', count: 2, percentage: 100 },
+        { key: 'Pending', label: 'Pending', count: 0, percentage: 0 },
+        { key: 'Follow Up', label: 'Follow Up', count: 0, percentage: 0 },
+        { key: 'Completed', label: 'Completed', count: 0, percentage: 0 },
+      ],
+      byServiceDomain: [
+        { key: 'technical-support', label: '01. Technical Support & Systems', count: 1, percentage: 50 },
+        { key: 'customer-service', label: '02. Customer Service Operations', count: 0, percentage: 0 },
+        { key: 'data-analytics', label: '03. Data Analytics & Executive Reporting', count: 1, percentage: 50 },
+        { key: 'admin-operations', label: '04. Administrative & Business Operations', count: 0, percentage: 0 },
+        { key: 'account-management', label: '05. Strategic Account Management', count: 0, percentage: 0 },
+        { key: 'web-creation', label: '06. Web Creation & AI Workflows', count: 0, percentage: 0 },
+      ],
+      byTimeline: [
+        { key: 'Immediate (1–2 weeks)', label: 'Immediate (1–2 weeks)', count: 1, percentage: 50, overdueCount: 0, dueSoonCount: 0 },
+        { key: 'Within 30 days', label: 'Within 30 days', count: 1, percentage: 50, overdueCount: 0, dueSoonCount: 0 },
+        { key: 'This quarter', label: 'This quarter', count: 0, percentage: 0, overdueCount: 0, dueSoonCount: 0 },
+        { key: 'Advisory / Ongoing', label: 'Advisory / Ongoing', count: 0, percentage: 0, overdueCount: 0, dueSoonCount: 0 },
+      ],
+      serviceDomainMatrix: [],
+      timelineMatrix: [],
+      monthlyTrends: [{ month: '2026-11', submitted: 2, completed: 0 }],
+    };
 
     await page.route('**/api/admin/dashboard', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify({
-          inquiries: [
-            {
-              id: 'INQ-2026-SENT01',
-              name: 'Jordan Taylor',
-              email: 'jordan@acme-ops.example',
-              phone: '+639171234567',
-              company: 'Acme Ops',
-              tier: 'smb',
-              serviceDomain: 'data-analytics',
-              timeline: 'Within 30 days',
-              message: 'Need cleaner SLA reporting.',
-              status: 'New',
-              createdAt: '2026-11-18T10:00:00.000Z',
-              emailStatus: 'sent',
-              emailAttempts: 1,
-              providerMessageId: '193a8f10ab',
-              lastEmailHttpStatus: 200,
-              lastEmailStage: 'gmail_accepted',
-            },
-            {
-              id: 'INQ-2026-QUEUED02',
-              name: 'Riley Chen',
-              email: 'riley@startup.example',
-              company: '',
-              tier: 'startup',
-              serviceDomain: 'technical-support',
-              timeline: 'Immediate (1–2 weeks)',
-              message: 'Support queue triage setup.',
-              status: 'New',
-              createdAt: '2026-11-18T09:00:00.000Z',
-              emailStatus: 'pending',
-              emailAttempts: 0,
-            },
-          ],
+          inquiries: mockCases,
+          cases: mockCases,
           projects: [],
+          users: [],
+          unreadNotifications: 1,
+          analytics: mockAnalytics,
           brand: {
             customPortraitDataUrl: null,
             customLogoDataUrl: null,
@@ -352,32 +443,94 @@ test.describe('Pio Languisan Portfolio Platform E2E', () => {
       });
     });
 
-    await page.route('**/api/admin/inquiries/*', async (route) => {
-      const body = route.request().postDataJSON();
+    await page.route('**/api/admin/analytics*', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(mockAnalytics),
+      });
+    });
+
+    await page.route('**/api/admin/cases?*', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify({
-          inquiry: {
-            id: 'INQ-2026-SENT01',
-            name: 'Jordan Taylor',
-            email: 'jordan@acme-ops.example',
-            phone: '+639171234567',
-            company: 'Acme Ops',
-            tier: 'smb',
-            serviceDomain: 'data-analytics',
-            timeline: 'Within 30 days',
-            message: 'Need cleaner SLA reporting.',
-            status: body.status || 'In Review',
-            notes: body.notes ?? '',
-            createdAt: '2026-11-18T10:00:00.000Z',
-            emailStatus: 'sent',
-            emailAttempts: 1,
-            providerMessageId: '193a8f10ab',
-            lastEmailHttpStatus: 200,
-            lastEmailStage: 'gmail_accepted',
+          items: mockCases,
+          total: mockCases.length,
+          page: 1,
+          pageSize: 15,
+          totalPages: 1,
+          statusCounts: { All: 2, New: 2, Pending: 0, 'Follow Up': 0, Completed: 0 },
+        }),
+      });
+    });
+
+    await page.route('**/api/admin/cases/INQ-2026-SENT01', async (route) => {
+      if (route.request().method() === 'PATCH') {
+        const body = route.request().postDataJSON();
+        mockCases[0] = { ...mockCases[0], status: body.status || 'Pending' };
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ inquiry: mockCases[0], caseRecord: mockCases[0] }),
+        });
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          caseRecord: mockCases[0],
+          statusHistory: [
+            {
+              id: 'h1',
+              caseId: 'INQ-2026-SENT01',
+              previousStatus: null,
+              newStatus: 'New',
+              changedBy: null,
+              changedByEmail: 'public-form',
+              note: 'Created',
+              changedAt: '2026-11-18T10:00:00.000Z',
+            },
+          ],
+          notes: [],
+          activity: [],
+        }),
+      });
+    });
+
+    await page.route('**/api/admin/cases/INQ-2026-SENT01/notes', async (route) => {
+      await route.fulfill({
+        status: 201,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          note: {
+            id: 'note-1',
+            caseId: 'INQ-2026-SENT01',
+            authorId: null,
+            authorEmail: 'executive-admin',
+            content: 'Confirmed in inbox.',
+            createdAt: '2026-11-18T11:00:00.000Z',
+            updatedAt: '2026-11-18T11:00:00.000Z',
           },
         }),
+      });
+    });
+
+    await page.route('**/api/admin/notifications*', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ notifications: [], unreadCount: 0 }),
+      });
+    });
+
+    await page.route('**/api/admin/activity*', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ activity: [] }),
       });
     });
 
@@ -454,8 +607,9 @@ test.describe('Pio Languisan Portfolio Platform E2E', () => {
     await expect(page.locator('#consult-phone')).toHaveValue('+63 917 123 4567');
     await expect(countryBtn).toContainText('Philippines (+63)');
 
-    // Retry sends identical submissionKey and normalized E.164 phone, displaying tracking ID cleanly
+    // Retry sends identical submissionKey and normalized E.164 phone, displaying case reference & tracking ID
     await page.getByRole('button', { name: 'Submit Consultation Request' }).click();
+    await expect(page.getByText('CASE-000001')).toBeVisible();
     await expect(page.getByText('INQ-2026-TEST1234')).toBeVisible();
     expect(seenSubmissionKeys.length).toBe(2);
     expect(seenSubmissionKeys[0]).toBeTruthy();
@@ -482,7 +636,7 @@ test.describe('Pio Languisan Portfolio Platform E2E', () => {
     await page.keyboard.press('Escape');
     await expect(drawer).toHaveCount(0);
 
-    // Admin Portal does NOT disclose hardcoded passcode, shows tel: links and Not provided, and updates inquiry status & notes
+    // Admin Dashboard does NOT disclose hardcoded passcode, displays live KPIs, case management, case details, and analytics
     await page.getByRole('button', { name: 'Admin Console' }).click();
     const adminDialog = page.getByRole('dialog');
     await expect(adminDialog).toBeVisible();
@@ -491,18 +645,45 @@ test.describe('Pio Languisan Portfolio Platform E2E', () => {
 
     await adminDialog.getByLabel('Executive passcode').fill('test-passcode');
     await adminDialog.getByRole('button', { name: 'Unlock Console' }).click();
+
+    // Overview KPIs visible
+    await expect(adminDialog.getByText('Total Requests')).toBeVisible();
+    await expect(adminDialog.getByText('Completion Rate')).toBeVisible();
+
+    // Navigate to All Cases and change status
+    await adminDialog.getByRole('button', { name: /All Cases/ }).click();
+    await adminDialog
+      .getByLabel('Status for Jordan Taylor', { exact: true })
+      .selectOption('Pending');
+    await expect(adminDialog.getByText('Updated CASE-000001 status to Pending.')).toBeVisible();
+
+    // Open Case Detail page -> tel: link, Gmail status, and add internal note
+    await adminDialog.getByRole('button', { name: 'CASE-000001' }).first().click();
     const telLink = adminDialog.getByRole('link', { name: '+639171234567' });
     await expect(telLink).toBeVisible();
     await expect(telLink).toHaveAttribute('href', 'tel:+639171234567');
-    await expect(adminDialog.getByText('Contact number: Not provided')).toBeVisible();
     await expect(adminDialog.getByText('Accepted by Gmail', { exact: true })).toBeVisible();
     await expect(adminDialog.getByText('Gmail ID: 193a8f10ab')).toBeVisible();
-    await expect(adminDialog.getByText('Queued', { exact: true })).toBeVisible();
-    await adminDialog.getByLabel('Status for Jordan Taylor').selectOption('In Review');
-    await expect(adminDialog.getByText('Updated INQ-2026-SENT01 to In Review.')).toBeVisible();
-    await adminDialog.getByLabel('Notes for INQ-2026-SENT01').fill('Confirmed in inbox.');
-    await adminDialog.getByRole('button', { name: 'Save Note' }).first().click();
-    await expect(adminDialog.getByText('Saved triage note for INQ-2026-SENT01.')).toBeVisible();
+    await adminDialog.locator('#case-internal-note').fill('Confirmed in inbox.');
+    await adminDialog.getByRole('button', { name: 'Add Internal Note' }).click();
+    await expect(adminDialog.getByText('Internal note recorded.')).toBeVisible();
+
+    // Navigate to Service Domain Analytics and Target Timelines
+    await adminDialog.getByRole('button', { name: 'Service Domain Analytics' }).click();
+    await expect(adminDialog.getByText('Service Domain × Status Matrix')).toBeVisible();
+    await adminDialog.getByRole('button', { name: 'Target Timelines' }).click();
+    await expect(adminDialog.getByText('Target Timeline × Status Matrix')).toBeVisible();
+
+    // Verify Admin Dashboard mobile responsive drawer & zero horizontal overflow at 390x844
+    await page.setViewportSize({ width: 390, height: 844 });
+    const adminOverflow = await adminDialog.evaluate(
+      (el) => el.scrollWidth - el.clientWidth
+    );
+    expect(adminOverflow).toBeLessThanOrEqual(1);
+    await adminDialog.getByRole('button', { name: 'Open admin navigation menu' }).click();
+    await adminDialog.getByRole('button', { name: 'Overview' }).last().click();
+    await expect(adminDialog.getByText('Total Requests')).toBeVisible();
+
     await page.keyboard.press('Escape');
   });
 
