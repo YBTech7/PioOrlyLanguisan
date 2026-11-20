@@ -781,7 +781,9 @@ const TEST_PG_URL = process.env.TEST_CONSULTATION_DATABASE_URL || '';
 describe.skipIf(!TEST_PG_URL)('PostgreSQL Migrations, Reconciliation & Durable Adapter Integration', () => {
   it('runs canonical migrations idempotently, rejects legacy UUID schema conflicts, and persists cases + site_content', async () => {
     const adapter = createPostgresAdapter(TEST_PG_URL);
-    await adapter.resetAllDataForTests();
+    // CI provisions an isolated PostgreSQL database for this test. Avoid a
+    // destructive adapter reset method that could accidentally target production.
+    const submissionKey = crypto.randomUUID();
 
     const created = await adapter.createCase(
       {
@@ -793,8 +795,9 @@ describe.skipIf(!TEST_PG_URL)('PostgreSQL Migrations, Reconciliation & Durable A
         timeline: 'Within 30 days',
         message: 'Verify transactional case creation and durable site content.',
       },
-      '22222222-2222-4222-8222-222222222222'
+      submissionKey
     );
+    if ('conflict' in created) throw new Error('Unexpected idempotency conflict for a new case');
     expect(created.deduplicated).toBe(false);
     expect(created.caseRecord.status).toBe('New');
 
@@ -808,8 +811,9 @@ describe.skipIf(!TEST_PG_URL)('PostgreSQL Migrations, Reconciliation & Durable A
         timeline: 'Within 30 days',
         message: 'Verify transactional case creation and durable site content.',
       },
-      '22222222-2222-4222-8222-222222222222'
+      submissionKey
     );
+    if ('conflict' in dedup) throw new Error('Unexpected idempotency conflict for repeated case');
     expect(dedup.deduplicated).toBe(true);
     expect(dedup.caseRecord.id).toBe(created.caseRecord.id);
 
