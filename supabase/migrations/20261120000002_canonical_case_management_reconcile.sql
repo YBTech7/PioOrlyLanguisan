@@ -286,22 +286,48 @@ ALTER TABLE public.admin_invitations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.auth_audit_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.site_content ENABLE ROW LEVEL SECURITY;
 
-REVOKE ALL ON
-  public.schema_migrations,
-  public.users,
-  public.cases,
-  public.case_status_history,
-  public.case_notes,
-  public.case_activity,
-  public.notifications,
-  public.idempotency_keys,
-  public.admin_sessions,
-  public.password_recovery_tokens,
-  public.admin_invitations,
-  public.auth_audit_events,
-  public.site_content
-FROM anon, authenticated;
-REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM anon, authenticated;
+-- Supabase supplies anon/authenticated roles; standalone PostgreSQL used by CI does not.
+-- Keep privileges revoked when those roles exist without requiring them in test databases.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+    REVOKE ALL ON
+      public.schema_migrations,
+      public.users,
+      public.cases,
+      public.case_status_history,
+      public.case_notes,
+      public.case_activity,
+      public.notifications,
+      public.idempotency_keys,
+      public.admin_sessions,
+      public.password_recovery_tokens,
+      public.admin_invitations,
+      public.auth_audit_events,
+      public.site_content
+    FROM anon;
+    REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM anon;
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+    REVOKE ALL ON
+      public.schema_migrations,
+      public.users,
+      public.cases,
+      public.case_status_history,
+      public.case_notes,
+      public.case_activity,
+      public.notifications,
+      public.idempotency_keys,
+      public.admin_sessions,
+      public.password_recovery_tokens,
+      public.admin_invitations,
+      public.auth_audit_events,
+      public.site_content
+    FROM authenticated;
+    REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM authenticated;
+  END IF;
+END $$;
 
 INSERT INTO public.schema_migrations (version)
 VALUES
